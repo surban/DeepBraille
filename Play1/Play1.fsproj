@@ -55,37 +55,42 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\AllTests\AllTests.fsproj">
+    <ProjectReference Include="..\DeepNet\AllTests\AllTests.fsproj">
       <Name>AllTests</Name>
       <Project>{d5cd7ec0-fb57-4cba-89e8-43e101d23ced}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\MLDatasets\MLDatasets.fsproj">
+    <ProjectReference Include="..\DeepNet\MLDatasets\MLDatasets.fsproj">
       <Name>MLDatasets</Name>
       <Project>{4e45833f-2658-465e-bb71-03400bba5534}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\MLModels\MLModels.fsproj">
+    <ProjectReference Include="..\DeepNet\MLModels\MLModels.fsproj">
       <Name>MLModels</Name>
       <Project>{28168025-4211-4de2-bb66-b267378f74a7}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\MLOptimizers\MLOptimizers.fsproj">
+    <ProjectReference Include="..\DeepNet\MLOptimizers\MLOptimizers.fsproj">
       <Name>MLOptimizers</Name>
       <Project>{c6ea7c8a-c74f-44df-828b-7c16b8a06329}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\SymTensorCuda\SymTensorCuda.fsproj">
+    <ProjectReference Include="..\DeepNet\RPlotTools\RPlotTools.fsproj">
+      <Name>RPlotTools</Name>
+      <Project>{bdb5d832-bc10-4b8f-bde0-7142646aa9cf}</Project>
+      <Private>True</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DeepNet\SymTensorCuda\SymTensorCuda.fsproj">
       <Name>SymTensorCuda</Name>
       <Project>{816e58da-85a0-4272-b042-682bc6f0aa5b}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\SymTensor\SymTensor.fsproj">
+    <ProjectReference Include="..\DeepNet\SymTensor\SymTensor.fsproj">
       <Name>SymTensor</Name>
       <Project>{2e96a03e-7031-43c3-aeee-b9c9dc543448}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\Tensor\Tensor.fsproj">
+    <ProjectReference Include="..\DeepNet\Tensor\Tensor.fsproj">
       <Name>Tensor</Name>
       <Project>{82de3bae-bcec-4df8-9c46-07b7faf4e31a}</Project>
       <Private>True</Private>

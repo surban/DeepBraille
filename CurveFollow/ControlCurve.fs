@@ -7,6 +7,7 @@ open System.Threading
 open Basics
 open Datasets
 open BRML.Drivers
+open SampleRecorder
 
 
 type XY = float * float

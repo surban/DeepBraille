@@ -14,29 +14,6 @@
     <TargetFSharpCoreVersion>4.4.0.0</TargetFSharpCoreVersion>
     <Name>CurveFollow</Name>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <Tailcalls>false</Tailcalls>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <WarningLevel>3</WarningLevel>
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DocumentationFile>bin\Debug\CurveFollow.XML</DocumentationFile>
-    <Prefer32Bit>true</Prefer32Bit>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <Tailcalls>true</Tailcalls>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <WarningLevel>3</WarningLevel>
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DocumentationFile>bin\Release\CurveFollow.XML</DocumentationFile>
-    <Prefer32Bit>true</Prefer32Bit>
-  </PropertyGroup>
   <PropertyGroup>
     <MinimumVisualStudioVersion Condition="'$(MinimumVisualStudioVersion)' == ''">11</MinimumVisualStudioVersion>
   </PropertyGroup>
@@ -83,6 +60,7 @@
   <Import Project="$(FSharpTargetsPath)" />
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
+    <Compile Include="Devices.fs" />
     <Compile Include="Data.fs" />
     <Compile Include="PID.fs" />
     <Compile Include="XYTableSim.fs" />
@@ -172,42 +150,47 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\BRMLDrivers\BRMLDrivers.fsproj">
+    <ProjectReference Include="..\BRMLDrivers\BRMLDrivers\BRMLDrivers.fsproj">
       <Name>BRMLDrivers</Name>
       <Project>{e50402f9-c245-4e5d-aeca-1cf1e1920237}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\MLDatasets\MLDatasets.fsproj">
+    <ProjectReference Include="..\BRMLDrivers\SampleRecorder\SampleRecorder.fsproj">
+      <Name>SampleRecorder</Name>
+      <Project>{98927e06-36b9-4274-8fbe-a3aa7c774467}</Project>
+      <Private>True</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DeepNet\MLDatasets\MLDatasets.fsproj">
       <Name>MLDatasets</Name>
       <Project>{4e45833f-2658-465e-bb71-03400bba5534}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\MLModels\MLModels.fsproj">
+    <ProjectReference Include="..\DeepNet\MLModels\MLModels.fsproj">
       <Name>MLModels</Name>
       <Project>{28168025-4211-4de2-bb66-b267378f74a7}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\MLOptimizers\MLOptimizers.fsproj">
+    <ProjectReference Include="..\DeepNet\MLOptimizers\MLOptimizers.fsproj">
       <Name>MLOptimizers</Name>
       <Project>{c6ea7c8a-c74f-44df-828b-7c16b8a06329}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\RPlotTools\RPlotTools.fsproj">
+    <ProjectReference Include="..\DeepNet\RPlotTools\RPlotTools.fsproj">
       <Name>RPlotTools</Name>
       <Project>{bdb5d832-bc10-4b8f-bde0-7142646aa9cf}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\SymTensorCuda\SymTensorCuda.fsproj">
+    <ProjectReference Include="..\DeepNet\SymTensorCuda\SymTensorCuda.fsproj">
       <Name>SymTensorCuda</Name>
       <Project>{816e58da-85a0-4272-b042-682bc6f0aa5b}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\SymTensor\SymTensor.fsproj">
+    <ProjectReference Include="..\DeepNet\SymTensor\SymTensor.fsproj">
       <Name>SymTensor</Name>
       <Project>{2e96a03e-7031-43c3-aeee-b9c9dc543448}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <ProjectReference Include="..\Tensor\Tensor.fsproj">
+    <ProjectReference Include="..\DeepNet\Tensor\Tensor.fsproj">
       <Name>Tensor</Name>
       <Project>{82de3bae-bcec-4df8-9c46-07b7faf4e31a}</Project>
       <Private>True</Private>

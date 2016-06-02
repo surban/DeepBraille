@@ -1,0 +1,6 @@
+[submodule "DeepNet"]
+	path = DeepNet
+	url = https://github.com/DeepMLNet/DeepNet
+[submodule "BRMLDrivers"]
+	path = BRMLDrivers
+	url = https://github.com/BRML/BRMLDrivers
