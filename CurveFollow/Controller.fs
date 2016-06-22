@@ -53,7 +53,7 @@ type MLPController (cfg:   MLPControllerCfg) =
     do printfn "Number of parameters in MLPController: %d" (ArrayND.nElems mi.ParameterValues)
 
     let pred = (MLP.pred mlp biotac.T).T
-    let predFun = mi.Func pred |> arg biotac 
+    let predFun = mi.Func pred |> arg1 biotac 
 
     let loss = MLP.loss mlp biotac.T target.T
 

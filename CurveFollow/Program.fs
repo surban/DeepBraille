@@ -95,6 +95,10 @@ let doRecord () =
     let dir = args.GetResult <@ Dir @>
     Movement.recordMovements dir
 
+let doRecordedToHdf5 () =
+    let dir = args.GetResult <@ Dir @>
+    Movement.convertRecordedMovementsToHdf5 dir
+
 let doPlotRecorded () =
     let dir = args.GetResult <@ Dir @>
     Movement.plotRecordedMovements dir
@@ -111,11 +115,12 @@ let main argv =
     let mode = args.GetResult <@ Mode @>
     match mode with
     | _ when mode = "train" -> doTrain () 
-    | _ when mode = "plotPredictions" -> doPlotPredictions ()
     | _ when mode = "evalController" -> doEvalController ()
     | _ when mode = "movement" -> doMovement ()
     | _ when mode = "distortions" -> doDistortions ()
     | _ when mode = "record" -> doRecord ()
+    | _ when mode = "recordedToHdf5" -> doRecordedToHdf5 ()
+    | _ when mode = "plotPredictions" -> doPlotPredictions ()
     | _ when mode = "plotRecorded" -> doPlotRecorded ()
     | _ when mode = "plotControl" -> doPlotRecordedControl ()
     | _ -> parser.Usage ("unknown mode") |> printfn "%s"

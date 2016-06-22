@@ -482,6 +482,62 @@ let recordMovements dir =
             plotRecordedMovement (Path.Combine (subDir, "recorded.pdf")) curve recMovement None
 
 
+/// Linearly interpolates the samples at the given times.
+let rec interpolate times samples = 
+    match times, samples with
+    | [], _ -> []
+    | t::rTimes, (ta, a)::(tb, b)::_ when ta <= t && t < tb ->
+        let fac = (t - ta) / (tb - ta) 
+        let s = Array.map2 (fun aEl bEl -> fac * bEl + (1. - fac) * aEl) a b
+        (t, s)::(interpolate rTimes samples)
+    | t::_, [] -> failwith "cannot extrapolate"
+    | t::_, (ta, _)::_ when t < ta -> failwith "cannot extrapolate"
+    | _, _::rSamples -> interpolate times rSamples
+
+
+/// Converts recorded movements to HDF5 format suitable for learning braille characters.
+let convertRecordedMovementsToHdf5 dir =
+    let bp = FsPickler.CreateBinarySerializer()
+
+    // x minimum:   10 mm
+    // x maximum:   130 mm
+    // x increment: 0.05 mm
+    let xPos = [10. .. 0.05 .. 130.]
+
+    let allCurveSamples = [
+        for subDir in Directory.EnumerateDirectories dir do
+            let recordFile = Path.Combine (subDir, "recorded.dat")
+            if File.Exists recordFile then
+                use fr = File.OpenRead recordFile
+                let recMovement : RecordedMovement = bp.Deserialize fr
+
+                let timeSamples = 
+                    recMovement.Points
+                    |> List.map (fun rmp -> fst rmp.DrivenPos, rmp.Biotac)
+                let xSamples = interpolate xPos timeSamples
+                yield xSamples
+    ]
+
+    let nSamples = List.length allCurveSamples
+    let nPos = List.length xPos
+    let nChannels = allCurveSamples |> List.head |> List.head |> snd |> Array.length
+
+    // [smpl, xpos, channel]
+    let biotac = ArrayNDHost.zeros [nSamples; nPos; nChannels]
+    // [smpl, xpos]
+    let xpos = ArrayNDHost.zeros [nSamples; nPos]
+
+    for smplIdx, smpl in Seq.indexed allCurveSamples do
+        for xPosIdx, (xPos, channels) in Seq.indexed smpl do
+            xpos.[[smplIdx; xPosIdx]] <- xPos
+            biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray
+
+    let samplesFilename = Path.Combine (dir, "samples.h5")
+    use samplesFile = HDF5.OpenWrite samplesFilename
+    ArrayNDHDF.write samplesFile "biotac" biotac
+    ArrayNDHDF.write samplesFile "xpos" xpos
+
+
 let plotRecordedMovements dir =
     let bp = FsPickler.CreateBinarySerializer()
     
