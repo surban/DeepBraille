@@ -28,7 +28,7 @@
     <DocumentationFile>bin\Debug\CurveFollow.XML</DocumentationFile>
     <Prefer32Bit>true</Prefer32Bit>
     <PlatformTarget>x64</PlatformTarget>
-    <StartArguments>--mode evalController --cfg .\Cfg\Model\Curv2-Set1-MLP1\Curv2-Set1-MLP1.fsx --dir .\Data\DeepBraille\Distortions\Curv2-Set1\09.cur</StartArguments>
+    <StartArguments>--mode recordedToHdf5 --dir .\Data\DeepBraille\Movements\Even1-OnLine\00.cur\</StartArguments>
     <StartWorkingDirectory>..\..\..</StartWorkingDirectory>
     <EnableUnmanagedDebugging>true</EnableUnmanagedDebugging>
     <UseVSHostingProcess>true</UseVSHostingProcess>

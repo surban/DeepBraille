@@ -495,15 +495,84 @@ let rec interpolate times samples =
     | _, _::rSamples -> interpolate times rSamples
 
 
+/// reads a .dot file
+let readDots filename = [
+    let lines = File.ReadAllLines filename
+    for line in lines do
+        yield [
+            for char in line.Split(' ') do
+                let value = char |> Seq.map (fun c -> c = '1') |> Array.ofSeq
+                yield value
+        ]
+]     
+
+/// Renders a line from dot data.
+let renderDotLine (dotLine: bool[] list) =
+    
+    // x minimum: 10 mm
+    // x maximum: 130 mm
+    // x resolution: 0.2 mm
+    let xMin = 10.
+    let xMax = 130.
+    let xRes = 0.2
+
+    let dotRadius = 0.72
+    let dotDist = 2.34         
+    let charDist = 6.2         
+
+    let xLength = (xMax - xMin) / xRes |> int
+    // [x, y]
+    let pixels = ArrayNDHost.zeros<single> [xLength; 3]
+
+    for charIdx, dots in List.indexed dotLine do
+        let charX = float charIdx * charDist 
+
+        for dotIdx, isOn in Seq.indexed dots do
+            if isOn then
+                let dotX = charX + float (dotIdx / 3) * dotDist - dotDist / 2.
+                let dotY = dotIdx % 3
+
+                let dotXStart = dotX - dotRadius
+                let dotXEnd = dotX + dotRadius
+
+                if xMin <= dotXStart && dotXStart < xMax &&
+                   xMin <= dotXEnd && dotXEnd < xMax then
+
+                    let dotXMinIdx = (dotXStart - xMin) / xRes |> round |> int
+                    let dotXMaxIdx = (dotXEnd - xMin) / xRes |> round |> int
+                    pixels.[dotXMinIdx .. dotXMaxIdx, dotY] <- ArrayNDHost.scalar 1.0f
+
+    pixels
+
+
 /// Converts recorded movements to HDF5 format suitable for learning braille characters.
 let convertRecordedMovementsToHdf5 dir =
     let bp = FsPickler.CreateBinarySerializer()
+
+    // read dot file
+    let dotFile = 
+        dir
+        |> Path.GetFullPath
+        |> fun path -> 
+            if path.EndsWith (Path.DirectorySeparatorChar |> string) then
+                path.[0 .. path.Length - 2]
+            else path
+        |> fun path ->
+            if not (path.EndsWith ".cur") then
+                failwithf "path %s does not end in .cur" path
+            else path
+        |> fun path -> path.[0 .. path.Length - 5] + ".dot"
+    let allDots = readDots dotFile
 
     // x minimum:   10 mm
     // x maximum:   130 mm
     // x increment: 0.05 mm
     let xPos = [10. .. 0.05 .. 130.]
+    
+    let lineDist = 10.0       
+    let yOffset = 18.5
 
+    // read recorded data
     let allCurveSamples = [
         for subDir in Directory.EnumerateDirectories dir do
             let recordFile = Path.Combine (subDir, "recorded.dat")
@@ -515,27 +584,41 @@ let convertRecordedMovementsToHdf5 dir =
                     recMovement.Points
                     |> List.map (fun rmp -> fst rmp.DrivenPos, rmp.Biotac)
                 let xSamples = interpolate xPos timeSamples
-                yield xSamples
+
+                // get associated dot line
+                let _, y = recMovement.Points.Head.DrivenPos
+                let row = (y - yOffset) / lineDist |> round |> int
+
+                yield xSamples, allDots.[row]
     ]
 
     let nSamples = List.length allCurveSamples
     let nPos = List.length xPos
-    let nChannels = allCurveSamples |> List.head |> List.head |> snd |> Array.length
+    let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
+    let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine |> ArrayND.shape
+    let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
 
     // [smpl, xpos, channel]
     let biotac = ArrayNDHost.zeros [nSamples; nPos; nChannels]
     // [smpl, xpos]
     let xpos = ArrayNDHost.zeros [nSamples; nPos]
+    // [smpl, dot_xpos, dot_ypos]
+    let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
 
-    for smplIdx, smpl in Seq.indexed allCurveSamples do
+    for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
+        dots.[smplIdx, Fill, Fill] <- renderDotLine dotLine
         for xPosIdx, (xPos, channels) in Seq.indexed smpl do
             xpos.[[smplIdx; xPosIdx]] <- xPos
             biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray
+            
 
     let samplesFilename = Path.Combine (dir, "samples.h5")
     use samplesFile = HDF5.OpenWrite samplesFilename
     ArrayNDHDF.write samplesFile "biotac" biotac
     ArrayNDHDF.write samplesFile "xpos" xpos
+    ArrayNDHDF.write samplesFile "dots" dots
+
+
 
 
 let plotRecordedMovements dir =
