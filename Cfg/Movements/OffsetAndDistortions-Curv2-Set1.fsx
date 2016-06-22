@@ -2,7 +2,7 @@
 #I "../../CurveFollow/bin/Debug"
 #endif 
 
-#r "Models.dll"
+#r "MLModels.dll"
 #r "CurveFollow.exe"
 
 open Movement
@@ -18,6 +18,7 @@ let baseMovement = {
     Movement.MaxControlVel  = 15.0
 
     Movement.Mode           = Movement.FixedOffset 0.
+    Movement.SkipFirstAndLast = true
 }
 
 let distortionMode = 

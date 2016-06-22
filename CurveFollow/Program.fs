@@ -24,9 +24,11 @@ type CLIArgs =
 with interface IArgParserTemplate with 
         member x.Usage = 
             match x with
-            | Mode _ -> "mode: train, follow"
+            | Mode _ -> "mode: train, evalController, movement, \
+                               distortions, record, \
+                               plotPredictions, plotRecorded, plotControl"
             | Cfg _ -> "configuration file"         
-            | Dir _ -> "data (movments) directory"
+            | Dir _ -> "data (movements) directory"
             | NoCache -> "disables loading a Dataset.h5 cache file"
 let parser = ArgumentParser.Create<CLIArgs>("Curve following")
 let args = parser.Parse(errorHandler=ProcessExiter())

@@ -83,13 +83,14 @@ type Mode =
     | Distortions of DistortionCfg
 
 type Cfg = {
-    Dt:             float
-    Accel:          float
-    VelX:           float
-    MaxVel:         float
-    MaxControlVel:  float
-    Mode:           Mode
-    IndentorPos:    float
+    Dt:                 float
+    Accel:              float
+    VelX:               float
+    MaxVel:             float
+    MaxControlVel:      float
+    Mode:               Mode
+    IndentorPos:        float
+    SkipFirstAndLast:   bool
 }
 
 type MovementPoint = {
@@ -430,7 +431,9 @@ let generateMovementForFile cfgs path outDir =
             let movement = generate cfg rnd curve
             plotMovement (Path.Combine (dir, "movement.pdf")) curve movement
 
-            if curveIdx <> 0 && curveIdx <> 6 then
+            if cfg.SkipFirstAndLast && (curveIdx = 0 || curveIdx = 6) then
+                ()
+            else
                 let p = FsPickler.CreateBinarySerializer()
                 use tw = File.OpenWrite(Path.Combine (dir, "movement.dat"))
                 p.Serialize(tw, movement)

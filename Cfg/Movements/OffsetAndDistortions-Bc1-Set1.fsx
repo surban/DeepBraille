@@ -11,7 +11,7 @@ open Models
 
 let baseMovement = {
     Movement.Dt             = 0.01
-    Movement.IndentorPos    = -43.4      // python had: -43.4        
+    Movement.IndentorPos    = -43.4      
     Movement.Accel          = 40.0 
     Movement.VelX           = 6.0 
     Movement.MaxVel         = 40.0
@@ -33,8 +33,8 @@ let distortionMode =
 
 
 let cfg = {
-    CurveDir        = Config.baseDir + "/Data/DeepBraille/Curves/test1"
-    MovementDir     = Config.baseDir + "/Data/DeepBraille/Movements/test1"
+    CurveDir        = Config.baseDir + "/Data/DeepBraille/Curves/bc1"
+    MovementDir     = Config.baseDir + "/Data/DeepBraille/Movements/Bc1-Set1"
     MovementCfgs    = 
         [
             baseMovement
@@ -46,6 +46,12 @@ let cfg = {
             {baseMovement with Mode = Movement.FixedOffset -3.0}
             {baseMovement with Mode = Movement.FixedOffset -7.0}
 
+            {baseMovement with Mode = distortionMode}
+            {baseMovement with Mode = distortionMode}
+            {baseMovement with Mode = distortionMode}
+            {baseMovement with Mode = distortionMode}
+            {baseMovement with Mode = distortionMode}
+            {baseMovement with Mode = distortionMode}
             {baseMovement with Mode = distortionMode}
             {baseMovement with Mode = distortionMode}
             {baseMovement with Mode = distortionMode}
