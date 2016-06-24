@@ -26,7 +26,8 @@ with interface IArgParserTemplate with
             match x with
             | Mode _ -> "mode: train, evalController, movement, \
                                distortions, record, \
-                               plotPredictions, plotRecorded, plotControl"
+                               plotPredictions, plotRecorded, plotControl, \
+                               buildCNNData"
             | Cfg _ -> "configuration file"         
             | Dir _ -> "data (movements) directory"
             | NoCache -> "disables loading a Dataset.h5 cache file"
@@ -95,9 +96,9 @@ let doRecord () =
     let dir = args.GetResult <@ Dir @>
     Movement.recordMovements dir
 
-let doRecordedToHdf5 () =
-    let dir = args.GetResult <@ Dir @>
-    Movement.convertRecordedMovementsToHdf5 dir
+let doBuildCNNData () =
+    let cfg : Movement.RecToHdf5Cfg = Config.load (args.GetResult <@ Cfg @>)
+    Movement.buildCNNData cfg 
 
 let doPlotRecorded () =
     let dir = args.GetResult <@ Dir @>
@@ -119,7 +120,7 @@ let main argv =
     | _ when mode = "movement" -> doMovement ()
     | _ when mode = "distortions" -> doDistortions ()
     | _ when mode = "record" -> doRecord ()
-    | _ when mode = "recordedToHdf5" -> doRecordedToHdf5 ()
+    | _ when mode = "buildCNNData" -> doBuildCNNData ()
     | _ when mode = "plotPredictions" -> doPlotPredictions ()
     | _ when mode = "plotRecorded" -> doPlotRecorded ()
     | _ when mode = "plotControl" -> doPlotRecordedControl ()

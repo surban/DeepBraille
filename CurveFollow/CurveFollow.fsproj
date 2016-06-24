@@ -28,7 +28,7 @@
     <DocumentationFile>bin\Debug\CurveFollow.XML</DocumentationFile>
     <Prefer32Bit>true</Prefer32Bit>
     <PlatformTarget>x64</PlatformTarget>
-    <StartArguments>--mode recordedToHdf5 --dir .\Data\DeepBraille\Movements\Even1-OnLine\00.cur\</StartArguments>
+    <StartArguments>--mode buildCNNData --cfg Cfg\RecToHdf5\Even1-OnLine-cnn1.fsx</StartArguments>
     <StartWorkingDirectory>..\..\..</StartWorkingDirectory>
     <EnableUnmanagedDebugging>true</EnableUnmanagedDebugging>
     <UseVSHostingProcess>true</UseVSHostingProcess>

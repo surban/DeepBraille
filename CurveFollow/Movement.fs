@@ -7,6 +7,7 @@ open RProvider.graphics
 open RProvider.grDevices
 open Nessos.FsPickler
 open Nessos.FsPickler.Json
+open MathNet.Numerics
 
 open Basics
 open ArrayNDNS
@@ -495,6 +496,45 @@ let rec interpolate times samples =
     | _, _::rSamples -> interpolate times rSamples
 
 
+type RecToHdf5Cfg = {
+
+    /// directory of recorded movements of a Braille pages (contains *.cur/*/recorded.dat and *.dot)
+    MovementDir:     string
+    /// output file (HDF5)
+    OutFile:         string
+
+    /// start column of valid tactile data in mm
+    StartCol:           float 
+    /// end column of valid tactile data in mm
+    EndCol:             float
+    /// column step in mm (is 0.02 mm in recorded data)
+    ColRes:             float
+    /// Number of steps per sample.
+    /// If specified, one row will be cut into multiple, overlapping samples
+    /// with the given number of steps.
+    NSteps:             int option
+
+    /// number of tactile data steps to cut from the left for the target dot values 
+    TargetLeftCut:      int
+    /// number of tactile data steps to cut from the right for the target dot values 
+    TargetRightCut:     int
+    /// down-sampling factor for the target dot values
+    TargetDownsample:   int
+
+    /// distance between lines in mm (is 10.0)
+    LineDist:           float
+    /// y position of first line in mm (is 18.5)
+    YOffset:            float
+    /// radius of Braille dot in mm (is 0.72)
+    DotRadius:          float
+    /// distance between centers of Braille dots in mm (is 2.34)
+    DotDist:            float
+    /// distance between corresponding dots of chars in mm (is 6.2)
+    CharDist:           float
+
+    
+}
+
 /// reads a .dot file
 let readDots filename = [
     let lines = File.ReadAllLines filename
@@ -507,74 +547,64 @@ let readDots filename = [
 ]     
 
 /// Renders a line from dot data.
-let renderDotLine (dotLine: bool[] list) =
-    
-    // x minimum: 10 mm
-    // x maximum: 130 mm
-    // x resolution: 0.2 mm
-    let xMin = 10.
-    let xMax = 130.
-    let xRes = 0.2
+let renderDotLine (cfg: RecToHdf5Cfg) nSteps (dotLine: bool[] list)  =
 
-    let dotRadius = 0.72
-    let dotDist = 2.34         
-    let charDist = 6.2         
-
-    let xLength = (xMax - xMin) / xRes |> int
-    // [x, y]
-    let pixels = ArrayNDHost.zeros<single> [xLength; 3]
+    // calculate dot pixels in same resolution as tactile data 
+    let pixels = ArrayNDHost.zeros<float> [nSteps; 3]         // [x, y]
+    let xStepWidth = (cfg.EndCol - cfg.StartCol) / float nSteps
 
     for charIdx, dots in List.indexed dotLine do
-        let charX = float charIdx * charDist 
+        let charX = float charIdx * cfg.CharDist 
 
         for dotIdx, isOn in Seq.indexed dots do
             if isOn then
-                let dotX = charX + float (dotIdx / 3) * dotDist - dotDist / 2.
+                let dotX = charX + float (dotIdx / 3) * cfg.DotDist - cfg.DotDist / 2.
                 let dotY = dotIdx % 3
 
-                let dotXStart = dotX - dotRadius
-                let dotXEnd = dotX + dotRadius
+                let dotXStart = dotX - cfg.DotRadius
+                let dotXEnd = dotX + cfg.DotRadius
 
-                if xMin <= dotXStart && dotXStart < xMax &&
-                   xMin <= dotXEnd && dotXEnd < xMax then
+                if (cfg.StartCol <= dotXStart && dotXStart < cfg.EndCol) && 
+                    (cfg.StartCol <= dotXEnd && dotXEnd < cfg.EndCol) then
 
-                    let dotXMinIdx = (dotXStart - xMin) / xRes |> round |> int
-                    let dotXMaxIdx = (dotXEnd - xMin) / xRes |> round |> int
-                    pixels.[dotXMinIdx .. dotXMaxIdx, dotY] <- ArrayNDHost.scalar 1.0f
+                    let dotXMinIdx = (dotXStart - cfg.StartCol) / xStepWidth |> round |> int
+                    let dotXMaxIdx = (dotXEnd - cfg.StartCol) / xStepWidth |> round |> int
+                    pixels.[dotXMinIdx .. dotXMaxIdx, dotY] <- ArrayNDHost.scalar 1.0
 
-    pixels
+    // then cutoff from left and right and down-sample using averaging
+    let cutPixels = pixels.[cfg.TargetLeftCut .. nSteps - 1 - cfg.TargetRightCut, Fill]
+    let dsPixels = 
+        ArrayNDHost.initIndexed 
+            [cutPixels.Shape.[0] / cfg.TargetDownsample; 3]
+            (function 
+             | [dsCol; dsRow] -> 
+                [for i=0 to cfg.TargetDownsample-1 do
+                    yield cutPixels.[[dsCol * cfg.TargetDownsample + i; dsRow]]]
+                |> List.average
+             | _ -> failwith "impossible")
+
+    dsPixels
 
 
-/// Converts recorded movements to HDF5 format suitable for learning braille characters.
-let convertRecordedMovementsToHdf5 dir =
+type CNNData = {
+    Biotac:         ArrayNDHostT<float>
+    XPos:           ArrayNDHostT<float>
+    Dots:           ArrayNDHostT<float>
+}
+
+
+/// Extracts data from recorded movements suitable for learning braille characters with CNNs for the given directory.
+let buildCNNDataForDir (cfg: RecToHdf5Cfg) recMovementDir dotFile =
     let bp = FsPickler.CreateBinarySerializer()
 
     // read dot file
-    let dotFile = 
-        dir
-        |> Path.GetFullPath
-        |> fun path -> 
-            if path.EndsWith (Path.DirectorySeparatorChar |> string) then
-                path.[0 .. path.Length - 2]
-            else path
-        |> fun path ->
-            if not (path.EndsWith ".cur") then
-                failwithf "path %s does not end in .cur" path
-            else path
-        |> fun path -> path.[0 .. path.Length - 5] + ".dot"
     let allDots = readDots dotFile
-
-    // x minimum:   10 mm
-    // x maximum:   130 mm
-    // x increment: 0.05 mm
-    let xPos = [10. .. 0.05 .. 130.]
-    
-    let lineDist = 10.0       
-    let yOffset = 18.5
-
-    // read recorded data
+  
+    // read recorded data and interpolate
+    let xPos = [cfg.StartCol .. cfg.ColRes .. cfg.EndCol]
+    let nSteps = List.length xPos
     let allCurveSamples = [
-        for subDir in Directory.EnumerateDirectories dir do
+        for subDir in Directory.EnumerateDirectories recMovementDir do
             let recordFile = Path.Combine (subDir, "recorded.dat")
             if File.Exists recordFile then
                 use fr = File.OpenRead recordFile
@@ -587,38 +617,113 @@ let convertRecordedMovementsToHdf5 dir =
 
                 // get associated dot line
                 let _, y = recMovement.Points.Head.DrivenPos
-                let row = (y - yOffset) / lineDist |> round |> int
+                let row = (y - cfg.YOffset) / cfg.LineDist |> round |> int
 
                 yield xSamples, allDots.[row]
     ]
 
-    let nSamples = List.length allCurveSamples
-    let nPos = List.length xPos
-    let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
-    let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine |> ArrayND.shape
-    let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
+    if List.isEmpty allCurveSamples then
+        Seq.empty
+    else
+        // build dataset arrays
+        let nSamples = List.length allCurveSamples
+        let nPos = List.length xPos
+        let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
+        let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> ArrayND.shape
+        let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
 
-    // [smpl, xpos, channel]
-    let biotac = ArrayNDHost.zeros [nSamples; nPos; nChannels]
-    // [smpl, xpos]
-    let xpos = ArrayNDHost.zeros [nSamples; nPos]
-    // [smpl, dot_xpos, dot_ypos]
-    let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
+        // [smpl, xpos, channel]
+        let biotac = ArrayNDHost.zeros [nSamples; nPos; nChannels]
+        // [smpl, xpos]
+        let xpos = ArrayNDHost.zeros [nSamples; nPos]
+        // [smpl, dot_xpos, dot_ypos]
+        let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
 
-    for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
-        dots.[smplIdx, Fill, Fill] <- renderDotLine dotLine
-        for xPosIdx, (xPos, channels) in Seq.indexed smpl do
-            xpos.[[smplIdx; xPosIdx]] <- xPos
-            biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray
-            
-
-    let samplesFilename = Path.Combine (dir, "samples.h5")
-    use samplesFile = HDF5.OpenWrite samplesFilename
-    ArrayNDHDF.write samplesFile "biotac" biotac
-    ArrayNDHDF.write samplesFile "xpos" xpos
-    ArrayNDHDF.write samplesFile "dots" dots
+        for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
+            dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine
+            for xPosIdx, (xPos, channels) in Seq.indexed smpl do
+                xpos.[[smplIdx; xPosIdx]] <- xPos
+                biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
 
 
+        match cfg.NSteps with
+        | None ->
+            Seq.singleton {
+                Biotac = biotac
+                XPos   = xpos
+                Dots   = dots
+            }
+        | Some nSteps ->
+            // now one sample was generated for the whole line
+            // it needs to be cut into samples with configured number of steps
+
+            let cutNSteps = nSteps - cfg.TargetLeftCut - cfg.TargetRightCut
+            if cutNSteps % cfg.TargetDownsample <> 0 then
+                failwithf "(NSteps - TargetLeftCut - TargetRightCut) = %d must be \
+                           a multiple of TargetDownsample" cutNSteps
+            let dotsPerCutSample = cutNSteps / cfg.TargetDownsample
+
+            seq {
+                let mutable biotacPos = 0
+                let mutable dotPos = 0
+                let mutable nCuts = 0
+
+                while biotacPos + nSteps <= nPos do
+                    yield {
+                        Biotac = biotac.[*, biotacPos .. biotacPos + nSteps - 1, *]
+                        XPos   = xpos.[*, biotacPos .. biotacPos + nSteps - 1]
+                        Dots   = dots.[*, dotPos .. dotPos + dotsPerCutSample - 1, *]
+                    }
+
+                    biotacPos <- biotacPos + cutNSteps
+                    dotPos <- dotPos + dotsPerCutSample
+                    nCuts <- nCuts + 1
+
+                printfn "Each Braille line was cut in %d samples." nCuts
+                let lostSteps = nPos - biotacPos - cfg.TargetLeftCut - cfg.TargetRightCut     
+                let lostDots = nDotX - dotPos
+                if lostSteps > 0 then
+                    printfn "Lost %d biotac steps (%.2f %%) and %d dot columns (%.2f %%) \
+                             per Braile line due to cutting."
+                        lostSteps (float lostSteps / float nPos * 100.) 
+                        lostDots (float lostDots / float nDotX * 100.)                
+            }        
+
+
+/// Extracts data from recorded movements suitable for learning braille characters with CNNs.
+let buildCNNData (cfg: RecToHdf5Cfg)  =
+    // get directories and dot files
+    let dirs = seq {
+        for dotPath in Directory.EnumerateFiles(cfg.MovementDir, "*.dot") do
+            let dotDir = Path.GetDirectoryName dotPath
+            let dotFile = Path.GetFileName dotPath
+            let curName = dotFile.Replace(".dot", ".cur")
+            let curPath = Path.Combine (dotDir, curName)
+
+            if Directory.Exists curPath then
+                yield curPath, dotPath
+    }
+
+    // acquire data for each directory and dot file
+    let dirDatas =
+        dirs
+        |> Seq.collect (fun (curPath, dotPath) -> buildCNNDataForDir cfg curPath dotPath)
+        |> List.ofSeq
+
+    // concatenate data
+    let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
+    let data = {
+        Biotac = concat (fun d -> d.Biotac)
+        XPos   = concat (fun d -> d.XPos)
+        Dots   = concat (fun d -> d.Dots)
+    }
+
+    // save as HDF5
+    let hdf = HDF5.OpenWrite cfg.OutFile
+    ArrayNDHDF.write hdf "biotac" data.Biotac
+    ArrayNDHDF.write hdf "xpos" data.XPos
+    ArrayNDHDF.write hdf "dots" data.Dots
+        
 
 
 let plotRecordedMovements dir =
