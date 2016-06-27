@@ -681,9 +681,11 @@ let buildCNNDataForDir (cfg: RecToHdf5Cfg) recMovementDir dotFile =
                     dotPos <- dotPos + dotsPerCutSample
                     nCuts <- nCuts + 1
 
-                printfn "Each Braille line was cut in %d samples." nCuts
-                let lostSteps = nPos - biotacPos - cfg.TargetLeftCut - cfg.TargetRightCut     
+                let usedSteps = biotacPos + cfg.TargetLeftCut + cfg.TargetRightCut
+                let lostSteps = nPos - usedSteps
                 let lostDots = nDotX - dotPos
+                printfn "Each Braille line of %d steps (used: %d) was cut in %d samples of %d steps each."
+                    biotac.Shape.[1] usedSteps nCuts nSteps
                 if lostSteps > 0 then
                     printfn "Lost %d biotac steps (%.2f %%) and %d dot columns (%.2f %%) \
                              per Braile line due to cutting."

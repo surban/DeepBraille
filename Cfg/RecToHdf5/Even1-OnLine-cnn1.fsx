@@ -12,8 +12,8 @@ open Models
 let cfg : RecToHdf5Cfg = {
     MovementDir         = @"Z:\dev\Deep\DeepBraille\Data\DeepBraille\Movements\Even1-OnLine"
     Partitions          = ["trn", ["00"; "01"; "02"; "03"; "04"; "05"; "06"; "07"]
-                           "val", ["08"]
-                           "tst", ["09"]]
+                           "val", ["00"]
+                           "tst", ["00"]]
                           |> Map.ofSeq
     OutFile             = @"Z:\dev\deep-braille\datasets\cnn\Even1-OnLine\cnn1\data.h5"
 
