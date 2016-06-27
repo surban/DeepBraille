@@ -500,6 +500,8 @@ type RecToHdf5Cfg = {
 
     /// directory of recorded movements of a Braille pages (contains *.cur/*/recorded.dat and *.dot)
     MovementDir:     string
+    /// partitions of the data set
+    Partitions:      Map<string, string list>
     /// output file (HDF5)
     OutFile:         string
 
@@ -692,37 +694,37 @@ let buildCNNDataForDir (cfg: RecToHdf5Cfg) recMovementDir dotFile =
 
 /// Extracts data from recorded movements suitable for learning braille characters with CNNs.
 let buildCNNData (cfg: RecToHdf5Cfg)  =
-    // get directories and dot files
-    let dirs = seq {
-        for dotPath in Directory.EnumerateFiles(cfg.MovementDir, "*.dot") do
-            let dotDir = Path.GetDirectoryName dotPath
-            let dotFile = Path.GetFileName dotPath
-            let curName = dotFile.Replace(".dot", ".cur")
-            let curPath = Path.Combine (dotDir, curName)
+    use hdf = HDF5.OpenWrite cfg.OutFile
 
-            if Directory.Exists curPath then
-                yield curPath, dotPath
-    }
+    for KeyValue(partition, pages) in cfg.Partitions do
+        // get directories and dot files
+        let dirs = seq {
+            for page in pages do
+                let dotPath = Path.Combine (cfg.MovementDir, page + ".dot")
+                let curPath = Path.Combine (cfg.MovementDir, page + ".cur")
+                if Directory.Exists curPath then
+                    yield curPath, dotPath
+        }
 
-    // acquire data for each directory and dot file
-    let dirDatas =
-        dirs
-        |> Seq.collect (fun (curPath, dotPath) -> buildCNNDataForDir cfg curPath dotPath)
-        |> List.ofSeq
+        // acquire data for each directory and dot file
+        let dirDatas =
+            dirs
+            |> Seq.collect (fun (curPath, dotPath) -> buildCNNDataForDir cfg curPath dotPath)
+            |> List.ofSeq
 
-    // concatenate data
-    let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
-    let data = {
-        Biotac = concat (fun d -> d.Biotac)
-        XPos   = concat (fun d -> d.XPos)
-        Dots   = concat (fun d -> d.Dots)
-    }
+        if not (List.isEmpty dirDatas) then
+            // concatenate data
+            let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
+            let data = {
+                Biotac = concat (fun d -> d.Biotac)
+                XPos   = concat (fun d -> d.XPos)
+                Dots   = concat (fun d -> d.Dots)
+            }
 
-    // save as HDF5
-    let hdf = HDF5.OpenWrite cfg.OutFile
-    ArrayNDHDF.write hdf "biotac" data.Biotac
-    ArrayNDHDF.write hdf "xpos" data.XPos
-    ArrayNDHDF.write hdf "dots" data.Dots
+            // save as HDF5
+            ArrayNDHDF.write hdf (partition + "/biotac") data.Biotac
+            ArrayNDHDF.write hdf (partition + "/xpos") data.XPos
+            ArrayNDHDF.write hdf (partition + "/dots") data.Dots
         
 
 
