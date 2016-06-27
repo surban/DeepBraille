@@ -9,7 +9,7 @@ open Movement
 open Models
 
 
-let cfg : RecToHdf5Cfg = {
+let cfg : CNNDatasetCfg = {
     MovementDir         = @"Z:\dev\Deep\DeepBraille\Data\DeepBraille\Movements\Even1-OnLine"
     Partitions          = ["trn", ["00"; "01"; "02"; "03"; "04"; "05"; "06"; "07"]
                            "val", ["00"]

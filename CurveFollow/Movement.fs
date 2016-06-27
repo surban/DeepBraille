@@ -496,7 +496,7 @@ let rec interpolate times samples =
     | _, _::rSamples -> interpolate times rSamples
 
 
-type RecToHdf5Cfg = {
+type CNNDatasetCfg = {
 
     /// directory of recorded movements of a Braille pages (contains *.cur/*/recorded.dat and *.dot)
     MovementDir:     string
@@ -549,7 +549,7 @@ let readDots filename = [
 ]     
 
 /// Renders a line from dot data.
-let renderDotLine (cfg: RecToHdf5Cfg) nSteps (dotLine: bool[] list)  =
+let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
 
     // calculate dot pixels in same resolution as tactile data 
     let pixels = ArrayNDHost.zeros<float> [nSteps; 3]         // [x, y]
@@ -596,7 +596,7 @@ type CNNData = {
 
 
 /// Extracts data from recorded movements suitable for learning braille characters with CNNs for the given directory.
-let buildCNNDataForDir (cfg: RecToHdf5Cfg) recMovementDir dotFile =
+let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
     let bp = FsPickler.CreateBinarySerializer()
 
     // read dot file
@@ -661,7 +661,7 @@ let buildCNNDataForDir (cfg: RecToHdf5Cfg) recMovementDir dotFile =
 
             let cutNSteps = nSteps - cfg.TargetLeftCut - cfg.TargetRightCut
             if cutNSteps % cfg.TargetDownsample <> 0 then
-                failwithf "(NSteps - TargetLeftCut - TargetRightCut) = %d must be \
+                printfn "(NSteps - TargetLeftCut - TargetRightCut) = %d is not \
                            a multiple of TargetDownsample" cutNSteps
             let dotsPerCutSample = cutNSteps / cfg.TargetDownsample
 
@@ -695,7 +695,7 @@ let buildCNNDataForDir (cfg: RecToHdf5Cfg) recMovementDir dotFile =
 
 
 /// Extracts data from recorded movements suitable for learning braille characters with CNNs.
-let buildCNNData (cfg: RecToHdf5Cfg)  =
+let buildCNNData (cfg: CNNDatasetCfg)  =
     use hdf = HDF5.OpenWrite cfg.OutFile
 
     for KeyValue(partition, pages) in cfg.Partitions do

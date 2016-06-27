@@ -97,7 +97,7 @@ let doRecord () =
     Movement.recordMovements dir
 
 let doBuildCNNData () =
-    let cfg : Movement.RecToHdf5Cfg = Config.load (args.GetResult <@ Cfg @>)
+    let cfg : Movement.CNNDatasetCfg = Config.load (args.GetResult <@ Cfg @>)
     Movement.buildCNNData cfg 
 
 let doPlotRecorded () =
