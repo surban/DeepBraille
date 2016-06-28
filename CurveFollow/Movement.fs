@@ -525,6 +525,8 @@ type CNNDatasetCfg = {
 
     /// distance between lines in mm (is 10.0)
     LineDist:           float
+    /// x position of center of first character in mm 
+    XOffset:            float
     /// y position of first line in mm (is 18.5)
     YOffset:            float
     /// radius of Braille dot in mm (is 0.72)
@@ -556,7 +558,7 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
     let xStepWidth = (cfg.EndCol - cfg.StartCol) / float nSteps
 
     for charIdx, dots in List.indexed dotLine do
-        let charX = float charIdx * cfg.CharDist 
+        let charX = float charIdx * cfg.CharDist + cfg.XOffset
 
         for dotIdx, isOn in Seq.indexed dots do
             if isOn then
@@ -592,6 +594,7 @@ type CNNData = {
     Biotac:         ArrayNDHostT<float>
     XPos:           ArrayNDHostT<float>
     Dots:           ArrayNDHostT<float>
+    Cut:            int
 }
 
 
@@ -654,6 +657,7 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
                 Biotac = biotac
                 XPos   = xpos
                 Dots   = dots
+                Cut    = 0
             }
         | Some nSteps ->
             // now one sample was generated for the whole line
@@ -668,18 +672,22 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
             seq {
                 let mutable biotacPos = 0
                 let mutable dotPos = 0
-                let mutable nCuts = 0
+                let mutable nCuts = 0   
+                for smpl = 0 to nSamples - 1 do
+                    biotacPos <- 0
+                    dotPos <- 0
+                    nCuts <- 0               
+                    while biotacPos + nSteps <= nPos do
+                        yield {
+                            Biotac = biotac.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1, *]
+                            XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1]
+                            Dots   = dots.[smpl .. smpl, dotPos .. dotPos + dotsPerCutSample - 1, *]
+                            Cut    = nCuts
+                        }
 
-                while biotacPos + nSteps <= nPos do
-                    yield {
-                        Biotac = biotac.[*, biotacPos .. biotacPos + nSteps - 1, *]
-                        XPos   = xpos.[*, biotacPos .. biotacPos + nSteps - 1]
-                        Dots   = dots.[*, dotPos .. dotPos + dotsPerCutSample - 1, *]
-                    }
-
-                    biotacPos <- biotacPos + cutNSteps
-                    dotPos <- dotPos + dotsPerCutSample
-                    nCuts <- nCuts + 1
+                        biotacPos <- biotacPos + cutNSteps
+                        dotPos <- dotPos + dotsPerCutSample
+                        nCuts <- nCuts + 1
 
                 let usedSteps = biotacPos + cfg.TargetLeftCut + cfg.TargetRightCut
                 let lostSteps = nPos - usedSteps
@@ -691,7 +699,7 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
                              per Braile line due to cutting."
                         lostSteps (float lostSteps / float nPos * 100.) 
                         lostDots (float lostDots / float nDotX * 100.)                
-            }        
+            }       
 
 
 /// Extracts data from recorded movements suitable for learning braille characters with CNNs.
@@ -713,6 +721,10 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
             dirs
             |> Seq.collect (fun (curPath, dotPath) -> buildCNNDataForDir cfg curPath dotPath)
             |> List.ofSeq
+        let nCuts =
+            dirDatas
+            |> List.map (fun d -> d.Cut + 1)
+            |> List.max
 
         if not (List.isEmpty dirDatas) then
             // concatenate data
@@ -721,12 +733,14 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                 Biotac = concat (fun d -> d.Biotac)
                 XPos   = concat (fun d -> d.XPos)
                 Dots   = concat (fun d -> d.Dots)
+                Cut    = 0
             }
 
             // save as HDF5
             ArrayNDHDF.write hdf (partition + "/biotac") data.Biotac
             ArrayNDHDF.write hdf (partition + "/xpos") data.XPos
             ArrayNDHDF.write hdf (partition + "/dots") data.Dots
+            ArrayNDHDF.write hdf (partition + "/ncuts") (ArrayNDHost.scalar nCuts)
         
 
 
