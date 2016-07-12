@@ -27,6 +27,7 @@ let cfg : CNNDatasetCfg = {
     TargetDownsample    = 4
 
     LineDist            = 10.0
+    XOffset             = 0.0
     YOffset             = 18.5
     DotRadius           = 0.72
     DotDist             = 2.34

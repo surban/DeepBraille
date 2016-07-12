@@ -79,11 +79,24 @@ type private DistortionState =
     | GotoPos of float
     | HoldUntil of float
 
+
+type RandomVelocityCfg = {
+    HoldLength:         float
+    MaxOffset:          float
+    MaxYVel:            float
+}
+
+type private RandomVelocityState = {
+    YVel:               float
+    HoldUntil:          float
+}
+
 type Mode =
     | FixedOffset of float
     | Distortions of DistortionCfg
+    | RandomVelocities of RandomVelocityCfg
 
-type Cfg = {
+type MovementCfg = {
     Dt:                 float
     Accel:              float
     VelX:               float
@@ -126,8 +139,13 @@ type RecordedMovement = {
     Points:         RecordedMovementPoint list
 }
 
+let rng = Random()
+let uniform lower upper = 
+    lower + rng.NextDouble() * (upper - lower)
+    
 
-let generate (cfg: Cfg) (rnd: System.Random) (curve: XY list) = 
+
+let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) = 
     let tblCfg = {
         XYTableSim.Accel  = cfg.Accel, cfg.Accel 
         XYTableSim.Dt     = cfg.Dt
@@ -149,14 +167,62 @@ let generate (cfg: Cfg) (rnd: System.Random) (curve: XY list) =
     }
     let maxOffset = 9.6
 
-    let rec generate curve (state: XYTableSim.State) distState = seq {
-        let movementPoint cVel cy = {
-            Time        = state.Time
-            Pos         = state.Pos
-            ControlVel  = cVel
-            CurveY      = cy
-            Distorted   = match distState with InactiveUntil _ -> true | _ -> false
-        }
+    let handleFixedOffset ofst x y t cy slope () =
+        let trgt = cy + ofst
+        let trgt = min trgt (baseY + maxOffset)
+        let trgt = max trgt (baseY - maxOffset)
+        let cVel = cfg.VelX, controlPid.Simulate trgt y t
+        cVel, abs ofst < 1e-3, ()
+
+    let handleDistortions dc x y t cy slope distState =
+        let cPos, nextState =
+            match distState with
+            | InactiveUntil iu ->               
+                let prob = dc.DistortionsPerSec * cfg.Dt
+                if x >= iu && rnd.NextDouble() < prob then
+                    let trgt = cy + (2.0 * rnd.NextDouble() - 1.0) * dc.MaxOffset
+                    let trgt = min trgt (baseY + maxOffset)
+                    let trgt = max trgt (baseY - maxOffset)
+                    cy, GotoPos trgt
+                else cy, distState
+            | GotoPos trgt ->
+                if abs (y - trgt) < 0.05 then
+                    let hu = x + dc.MinHold + rnd.NextDouble() * (dc.MaxHold - dc.MinHold)
+                    trgt, HoldUntil hu
+                else trgt, distState
+            | HoldUntil hu ->
+                if x >= hu then cy, InactiveUntil (x + dc.NotAgainFor)
+                else y, distState
+
+        let cVel = cfg.VelX, controlPid.Simulate cPos y t      
+        let distorted = match distState with InactiveUntil _ -> false | _ -> true
+        cVel, distorted, nextState
+
+    let handleRandomVelocities rvCfg x y t cy slope rvState =
+        let nextState =
+            if x > rvState.HoldUntil || 
+                    (abs (cy - y) > rvCfg.MaxOffset && sign rvState.YVel <> sign (cy-y)) then
+                // Calculate allowable y velocities so that offset after HoldLength
+                // is within MaxOffset. This is done using linear extrapolation
+                // of the curve using the slope at current curve point.
+                let vy delta =
+                    (slope + (delta + cy - y) / rvCfg.HoldLength) * cfg.VelX
+                let vyMin = min (vy rvCfg.MaxOffset) (vy -rvCfg.MaxOffset)
+                let vyMax = max (vy rvCfg.MaxOffset) (vy -rvCfg.MaxOffset)
+                let vy = uniform vyMin vyMax |> min rvCfg.MaxYVel |> max -rvCfg.MaxYVel
+                //printfn "slope: %.3f  vyMin: %.3f  vyMax: %.3f  vy: %.3f" slope vyMin vyMax vy
+
+                // Sample new y speed from allowable range
+                {
+                    YVel      = vy
+                    HoldUntil = x + rvCfg.HoldLength
+                }
+            else rvState
+
+        let cVel = cfg.VelX, nextState.YVel
+        cVel, true, nextState
+
+    let rec generate curve (state: XYTableSim.State) handler (handlerState: 'HandlerState) = seq {
         let x, y = state.Pos
         let t = state.Time
         match curve with
@@ -165,58 +231,47 @@ let generate (cfg: Cfg) (rnd: System.Random) (curve: XY list) =
             // interpolate curve points
             let fac = (x2 - x) / (x2 - x1)
             let cy = fac * y1 + (1. - fac) * y2
+            let slope = (y2 - y1) / (x2 - x1)
 
-            match cfg.Mode with
-            | FixedOffset ofst ->         
-                let trgt = cy + ofst
-                let trgt = min trgt (baseY + maxOffset)
-                let trgt = max trgt (baseY - maxOffset)
-                let cVel = cfg.VelX, controlPid.Simulate trgt y t
-                yield movementPoint cVel cy
-                yield! generate curve (XYTableSim.step cVel tblCfg state) distState
-            | Distortions dc ->
-                let cPos, nextState =
-                    match distState with
-                    | InactiveUntil iu ->               
-                        let prob = dc.DistortionsPerSec * cfg.Dt
-                        if x >= iu && rnd.NextDouble() < prob then
-                            let trgt = cy + (2.0 * rnd.NextDouble() - 1.0) * dc.MaxOffset
-                            let trgt = min trgt (baseY + maxOffset)
-                            let trgt = max trgt (baseY - maxOffset)
-                            cy, GotoPos trgt
-                        else cy, distState
-                    | GotoPos trgt ->
-                        if abs (y - trgt) < 0.05 then
-                            let hu = x + dc.MinHold + rnd.NextDouble() * (dc.MaxHold - dc.MinHold)
-                            trgt, HoldUntil hu
-                        else trgt, distState
-                    | HoldUntil hu ->
-                        if x >= hu then cy, InactiveUntil (x + dc.NotAgainFor)
-                        else y, distState
-
-                let cVel = cfg.VelX, controlPid.Simulate cPos y t               
-                yield movementPoint cVel cy
-                yield! generate curve (XYTableSim.step cVel tblCfg state) nextState
+            let cVel, distorted, nextHandlerState = handler x y t cy slope handlerState
+            yield {
+                Time        = state.Time
+                Pos         = state.Pos
+                ControlVel  = cVel
+                CurveY      = cy
+                Distorted   = distorted 
+            }
+            yield! generate curve (XYTableSim.step cVel tblCfg state) handler nextHandlerState               
 
         | (x1,y1) :: _ when x < x1 ->
             // x position is left of curve start
-            let vel = cfg.VelX, 0.
-            yield movementPoint vel y1
-            yield! generate curve (XYTableSim.step vel tblCfg state) distState
+            let cVel = cfg.VelX, 0.
+            yield {
+                Time        = state.Time
+                Pos         = state.Pos
+                ControlVel  = cVel
+                CurveY      = y1
+                Distorted   = false
+            }            
+            yield! generate curve (XYTableSim.step cVel tblCfg state) handler handlerState
         | _ :: rCurve ->
             // move forward on curve
-            yield! generate rCurve state distState
+            yield! generate rCurve state handler handlerState
     }
 
     let state = {XYTableSim.Time=0.; XYTableSim.Pos=startPos; XYTableSim.Vel=0., 0. }
-    let movement = generate curve state (InactiveUntil 0.3) |> Seq.toList 
+    let movement = 
+        match cfg.Mode with
+        | FixedOffset ofst -> generate curve state (handleFixedOffset ofst) ()
+        | Distortions dc -> generate curve state (handleDistortions dc) (InactiveUntil 0.3)
+        | RandomVelocities rvCfg -> generate curve state (handleRandomVelocities rvCfg) {YVel=0.; HoldUntil=0.}
 
     {
         StartPos    = startPos
         IndentorPos = cfg.IndentorPos
         Accel       = cfg.Accel
         VelX        = cfg.VelX
-        Points      = movement
+        Points      = movement |> Seq.toList
     }
 
 
@@ -294,6 +349,10 @@ let toArray extract points =
 let plotMovement (path: string) (curve: XY list) (movement: Movement) =
     let curveX, curveY = toArray id curve
     let posX, posY = toArray (fun (p: MovementPoint) -> p.Pos) movement.Points
+    let times =  movement.Points |> List.map (fun p -> p.Time) |> List.toArray
+    let velY = (Array.pairwise times, Array.pairwise posY)
+               ||> Array.map2 (fun (tb, ta) (b, a) -> (b - a) / (tb - ta))
+               |> Array.append [| 0. |]
     let controlVelX, controlVelY = toArray (fun (p: MovementPoint) -> p.ControlVel) movement.Points
     let distorted = movement.Points |> List.map (fun p -> p.Distorted) |> Array.ofList
 
@@ -312,7 +371,8 @@ let plotMovement (path: string) (curve: XY list) (movement: Movement) =
     R.plot2 ([0; 150], [-20; 20], "velocity", "x", "y velocity")
     R.abline(h=0) |> ignore
     R.lines2 (posX, controlVelY, "blue")
-    R.legend (125., 20, ["control"], col=["blue"], lty=[1;1]) |> ignore
+    R.lines2 (posX, velY, "red")
+    R.legend (125., 20, ["control"; "table"], col=["blue"; "red"], lty=[1;1]) |> ignore
 
     R.dev_off() |> ignore
 
@@ -429,7 +489,7 @@ let generateMovementForFile cfgs path outDir =
             let dir = Path.Combine(outDir, sprintf "Curve%dCfg%d" curveIdx cfgIdx)
             Directory.CreateDirectory dir |> ignore
 
-            let movement = generate cfg rnd curve
+            let movement = generateMovement cfg rnd curve
             plotMovement (Path.Combine (dir, "movement.pdf")) curve movement
 
             if cfg.SkipFirstAndLast && (curveIdx = 0 || curveIdx = 6) then
@@ -444,7 +504,7 @@ let generateMovementForFile cfgs path outDir =
 type GenCfg = {
     CurveDir:           string
     MovementDir:        string
-    MovementCfgs:       Cfg list
+    MovementCfgs:       MovementCfg list
 }
 
 let generateMovementUsingCfg cfg  =
@@ -554,6 +614,7 @@ let readDots filename = [
 let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
 
     // calculate dot pixels in same resolution as tactile data 
+    let dotPos = ResizeArray()
     let pixels = ArrayNDHost.zeros<float> [nSteps; 3]         // [x, y]
     let xStepWidth = (cfg.EndCol - cfg.StartCol) / float nSteps
 
@@ -561,18 +622,20 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
         let charX = float charIdx * cfg.CharDist + cfg.XOffset
 
         for dotIdx, isOn in Seq.indexed dots do
-            if isOn then
-                let dotX = charX + float (dotIdx / 3) * cfg.DotDist - cfg.DotDist / 2.
-                let dotY = dotIdx % 3
+            let dotX = charX + float (dotIdx / 3) * cfg.DotDist - cfg.DotDist / 2.
+            let dotY = dotIdx % 3
 
-                let dotXStart = dotX - cfg.DotRadius
-                let dotXEnd = dotX + cfg.DotRadius
+            let dotXStart = dotX - cfg.DotRadius
+            let dotXEnd = dotX + cfg.DotRadius
 
-                if (cfg.StartCol <= dotXStart && dotXStart < cfg.EndCol) && 
-                    (cfg.StartCol <= dotXEnd && dotXEnd < cfg.EndCol) then
+            if (cfg.StartCol <= dotXStart && dotXStart < cfg.EndCol) && 
+                (cfg.StartCol <= dotXEnd && dotXEnd < cfg.EndCol) then
 
-                    let dotXMinIdx = (dotXStart - cfg.StartCol) / xStepWidth |> round |> int
-                    let dotXMaxIdx = (dotXEnd - cfg.StartCol) / xStepWidth |> round |> int
+                let dotXMinIdx = (dotXStart - cfg.StartCol) / xStepWidth |> round |> int
+                let dotXMaxIdx = (dotXEnd - cfg.StartCol) / xStepWidth |> round |> int
+                dotPos.Add((charIdx, dotIdx, dotXMinIdx, dotXMaxIdx, dotY))
+
+                if isOn then
                     pixels.[dotXMinIdx .. dotXMaxIdx, dotY] <- ArrayNDHost.scalar 1.0
 
     // then cutoff from left and right and down-sample using averaging
@@ -587,7 +650,7 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
                 |> List.average
              | _ -> failwith "impossible")
 
-    dsPixels
+    dsPixels, Seq.toList dotPos
 
 
 type CNNData = {
@@ -595,6 +658,7 @@ type CNNData = {
     XPos:           ArrayNDHostT<float>
     Dots:           ArrayNDHostT<float>
     Cut:            int
+    DotPos:         (int * int * int * int * int) list
 }
 
 
@@ -634,7 +698,7 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
         let nSamples = List.length allCurveSamples
         let nPos = List.length xPos
         let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
-        let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> ArrayND.shape
+        let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> fst |> ArrayND.shape
         let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
 
         // [smpl, xpos, channel]
@@ -644,8 +708,12 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
         // [smpl, dot_xpos, dot_ypos]
         let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
 
+        let fstDotLine = allCurveSamples |> Seq.head |> snd
+        // dotPos: (col, dot, startXIdx, endXIdx) list
+        let _, dotPosInfo = renderDotLine cfg nSteps fstDotLine
+
         for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
-            dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine
+            dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine |> fst
             for xPosIdx, (xPos, channels) in Seq.indexed smpl do
                 xpos.[[smplIdx; xPosIdx]] <- xPos
                 biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
@@ -658,6 +726,7 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
                 XPos   = xpos
                 Dots   = dots
                 Cut    = 0
+                DotPos = dotPosInfo
             }
         | Some nSteps ->
             // now one sample was generated for the whole line
@@ -683,6 +752,7 @@ let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
                             XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1]
                             Dots   = dots.[smpl .. smpl, dotPos .. dotPos + dotsPerCutSample - 1, *]
                             Cut    = nCuts
+                            DotPos = dotPosInfo
                         }
 
                         biotacPos <- biotacPos + cutNSteps
@@ -734,13 +804,20 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                 XPos   = concat (fun d -> d.XPos)
                 Dots   = concat (fun d -> d.Dots)
                 Cut    = 0
+                DotPos = dirDatas.Head.DotPos
             }
+
+            // convert dot position list to array
+            let dotPosAry = ArrayNDHost.zeros<int> [data.DotPos.Length; 5]
+            for idx, (col, dot, startIdx, stopIdx, row) in Seq.indexed data.DotPos do
+                dotPosAry.[idx, *] <- [col; dot; startIdx; stopIdx; row] |> ArrayNDHost.ofList
 
             // save as HDF5
             ArrayNDHDF.write hdf (partition + "/biotac") data.Biotac
             ArrayNDHDF.write hdf (partition + "/xpos") data.XPos
             ArrayNDHDF.write hdf (partition + "/dots") data.Dots
             ArrayNDHDF.write hdf (partition + "/ncuts") (ArrayNDHost.scalar nCuts)
+            ArrayNDHDF.write hdf (partition + "/dotpos") dotPosAry
         
 
 

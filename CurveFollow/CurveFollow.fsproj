@@ -28,7 +28,7 @@
     <DocumentationFile>bin\Debug\CurveFollow.XML</DocumentationFile>
     <Prefer32Bit>true</Prefer32Bit>
     <PlatformTarget>x64</PlatformTarget>
-    <StartArguments>--mode buildCNNData --cfg "Z:\dev\deep-braille\cfgs\cnn\cnn1\data.fsx"</StartArguments>
+    <StartArguments>--mode movement --cfg "Z:\dev\Deep\DeepBraille\Cfg\Movements\RandomVelocity-Curv2-Set1.fsx"</StartArguments>
     <StartWorkingDirectory>..\..\..</StartWorkingDirectory>
     <EnableUnmanagedDebugging>true</EnableUnmanagedDebugging>
     <UseVSHostingProcess>true</UseVSHostingProcess>
