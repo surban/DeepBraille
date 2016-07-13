@@ -100,6 +100,10 @@ let doBuildCNNData () =
     let cfg : Movement.CNNDatasetCfg = Config.load (args.GetResult <@ Cfg @>)
     Movement.buildCNNData cfg 
 
+let doBuildWorldRNNData () =
+    let cfg : Movement.WorldRNNDatasetCfg = Config.load (args.GetResult <@ Cfg @>)
+    Movement.buildWorldRNNData cfg 
+
 let doPlotRecorded () =
     let dir = args.GetResult <@ Dir @>
     Movement.plotRecordedMovements dir
@@ -121,6 +125,7 @@ let main argv =
     | _ when mode = "distortions" -> doDistortions ()
     | _ when mode = "record" -> doRecord ()
     | _ when mode = "buildCNNData" -> doBuildCNNData ()
+    | _ when mode = "buildWorldRNNData" -> doBuildWorldRNNData ()
     | _ when mode = "plotPredictions" -> doPlotPredictions ()
     | _ when mode = "plotRecorded" -> doPlotRecorded ()
     | _ when mode = "plotControl" -> doPlotRecordedControl ()

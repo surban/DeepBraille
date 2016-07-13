@@ -544,16 +544,18 @@ let recordMovements dir =
 
 
 /// Linearly interpolates the samples at the given times.
-let rec interpolate times samples = 
+/// The interpolation function ipFunc must linearly interpolate according to
+/// let ipFunc fac a b = fac * b + (1. - fac) * a.
+let rec interpolate ipFunc times samples = 
     match times, samples with
     | [], _ -> []
     | t::rTimes, (ta, a)::(tb, b)::_ when ta <= t && t < tb ->
         let fac = (t - ta) / (tb - ta) 
-        let s = Array.map2 (fun aEl bEl -> fac * bEl + (1. - fac) * aEl) a b
-        (t, s)::(interpolate rTimes samples)
+        let s = ipFunc fac a b
+        (t, s)::(interpolate ipFunc rTimes samples)
     | t::_, [] -> failwith "cannot extrapolate"
     | t::_, (ta, _)::_ when t < ta -> failwith "cannot extrapolate"
-    | _, _::rSamples -> interpolate times rSamples
+    | _, _::rSamples -> interpolate ipFunc times rSamples
 
 
 type CNNDatasetCfg = {
@@ -653,6 +655,30 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
     dsPixels, Seq.toList dotPos
 
 
+/// Builds a dataset from multiple directories using a builder and a saver function.
+let buildMultidirData builder saver movementDir partitions =
+    for KeyValue(partition, pages) in partitions do
+        // get directories and dot files
+        let dirs = seq {
+            for page in pages do
+                let dotPath = Path.Combine (movementDir, page + ".dot")
+                let curPath = Path.Combine (movementDir, page + ".cur")
+                if Directory.Exists curPath then
+                    yield curPath, dotPath
+        }
+
+        // acquire data for each directory and dot file
+        let dirDatas =
+            dirs
+            |> Seq.collect (fun (curPath, dotPath) -> builder curPath dotPath)
+            |> List.ofSeq
+
+        // save data
+        if not (List.isEmpty dirDatas) then
+            saver partition dirDatas
+
+
+/// CNN data sample(s)
 type CNNData = {
     Biotac:         ArrayNDHostT<float>
     XPos:           ArrayNDHostT<float>
@@ -662,163 +688,279 @@ type CNNData = {
 }
 
 
-/// Extracts data from recorded movements suitable for learning braille characters with CNNs for the given directory.
-let buildCNNDataForDir (cfg: CNNDatasetCfg) recMovementDir dotFile =
-    let bp = FsPickler.CreateBinarySerializer()
-
-    // read dot file
-    let allDots = readDots dotFile
-  
-    // read recorded data and interpolate
-    let xPos = [cfg.StartCol .. cfg.ColRes .. cfg.EndCol]
-    let nSteps = List.length xPos
-    let allCurveSamples = [
-        for subDir in Directory.EnumerateDirectories recMovementDir do
-            let recordFile = Path.Combine (subDir, "recorded.dat")
-            if File.Exists recordFile then
-                use fr = File.OpenRead recordFile
-                let recMovement : RecordedMovement = bp.Deserialize fr
-
-                let timeSamples = 
-                    recMovement.Points
-                    |> List.map (fun rmp -> fst rmp.DrivenPos, rmp.Biotac)
-                let xSamples = interpolate xPos timeSamples
-
-                // get associated dot line
-                let _, y = recMovement.Points.Head.DrivenPos
-                let row = (y - cfg.YOffset) / cfg.LineDist |> round |> int
-
-                yield xSamples, allDots.[row]
-    ]
-
-    if List.isEmpty allCurveSamples then
-        Seq.empty
-    else
-        // build dataset arrays
-        let nSamples = List.length allCurveSamples
-        let nPos = List.length xPos
-        let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
-        let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> fst |> ArrayND.shape
-        let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
-
-        // [smpl, xpos, channel]
-        let biotac = ArrayNDHost.zeros [nSamples; nPos; nChannels]
-        // [smpl, xpos]
-        let xpos = ArrayNDHost.zeros [nSamples; nPos]
-        // [smpl, dot_xpos, dot_ypos]
-        let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
-
-        let fstDotLine = allCurveSamples |> Seq.head |> snd
-        // dotPos: (col, dot, startXIdx, endXIdx) list
-        let _, dotPosInfo = renderDotLine cfg nSteps fstDotLine
-
-        for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
-            dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine |> fst
-            for xPosIdx, (xPos, channels) in Seq.indexed smpl do
-                xpos.[[smplIdx; xPosIdx]] <- xPos
-                biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
-
-
-        match cfg.NSteps with
-        | None ->
-            Seq.singleton {
-                Biotac = biotac
-                XPos   = xpos
-                Dots   = dots
-                Cut    = 0
-                DotPos = dotPosInfo
-            }
-        | Some nSteps ->
-            // now one sample was generated for the whole line
-            // it needs to be cut into samples with configured number of steps
-
-            let cutNSteps = nSteps - cfg.TargetLeftCut - cfg.TargetRightCut
-            if cutNSteps % cfg.TargetDownsample <> 0 then
-                printfn "(NSteps - TargetLeftCut - TargetRightCut) = %d is not \
-                           a multiple of TargetDownsample" cutNSteps
-            let dotsPerCutSample = cutNSteps / cfg.TargetDownsample
-
-            seq {
-                let mutable biotacPos = 0
-                let mutable dotPos = 0
-                let mutable nCuts = 0   
-                for smpl = 0 to nSamples - 1 do
-                    biotacPos <- 0
-                    dotPos <- 0
-                    nCuts <- 0               
-                    while biotacPos + nSteps <= nPos do
-                        yield {
-                            Biotac = biotac.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1, *]
-                            XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1]
-                            Dots   = dots.[smpl .. smpl, dotPos .. dotPos + dotsPerCutSample - 1, *]
-                            Cut    = nCuts
-                            DotPos = dotPosInfo
-                        }
-
-                        biotacPos <- biotacPos + cutNSteps
-                        dotPos <- dotPos + dotsPerCutSample
-                        nCuts <- nCuts + 1
-
-                let usedSteps = biotacPos + cfg.TargetLeftCut + cfg.TargetRightCut
-                let lostSteps = nPos - usedSteps
-                let lostDots = nDotX - dotPos
-                printfn "Each Braille line of %d steps (used: %d) was cut in %d samples of %d steps each."
-                    biotac.Shape.[1] usedSteps nCuts nSteps
-                if lostSteps > 0 then
-                    printfn "Lost %d biotac steps (%.2f %%) and %d dot columns (%.2f %%) \
-                             per Braile line due to cutting."
-                        lostSteps (float lostSteps / float nPos * 100.) 
-                        lostDots (float lostDots / float nDotX * 100.)                
-            }       
-
-
 /// Extracts data from recorded movements suitable for learning braille characters with CNNs.
 let buildCNNData (cfg: CNNDatasetCfg)  =
     use hdf = HDF5.OpenWrite cfg.OutFile
 
-    for KeyValue(partition, pages) in cfg.Partitions do
-        // get directories and dot files
-        let dirs = seq {
-            for page in pages do
-                let dotPath = Path.Combine (cfg.MovementDir, page + ".dot")
-                let curPath = Path.Combine (cfg.MovementDir, page + ".cur")
-                if Directory.Exists curPath then
-                    yield curPath, dotPath
-        }
+    let builder recMovementDir dotFile =
+        let bp = FsPickler.CreateBinarySerializer()
 
-        // acquire data for each directory and dot file
-        let dirDatas =
-            dirs
-            |> Seq.collect (fun (curPath, dotPath) -> buildCNNDataForDir cfg curPath dotPath)
-            |> List.ofSeq
+        // read dot file
+        let allDots = readDots dotFile
+  
+        // read recorded data and interpolate
+        let xPos = [cfg.StartCol .. cfg.ColRes .. cfg.EndCol]
+        let nSteps = List.length xPos
+        let allCurveSamples = [
+            for subDir in Directory.EnumerateDirectories recMovementDir do
+                let recordFile = Path.Combine (subDir, "recorded.dat")
+                if File.Exists recordFile then
+                    use fr = File.OpenRead recordFile
+                    let recMovement : RecordedMovement = bp.Deserialize fr
+
+                    let timeSamples = 
+                        recMovement.Points
+                        |> List.map (fun rmp -> fst rmp.DrivenPos, rmp.Biotac)
+                    let ipFunc fac = Array.map2 (fun aEl bEl -> fac * bEl + (1. - fac) * aEl)
+                    let xSamples = interpolate ipFunc xPos timeSamples
+
+                    // get associated dot line
+                    let _, y = recMovement.Points.Head.DrivenPos
+                    let row = (y - cfg.YOffset) / cfg.LineDist |> round |> int
+
+                    yield xSamples, allDots.[row]
+        ]
+
+        if List.isEmpty allCurveSamples then
+            Seq.empty
+        else
+            // build dataset arrays
+            let nSamples = List.length allCurveSamples
+            let nPos = List.length xPos
+            let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
+            let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> fst |> ArrayND.shape
+            let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
+
+            // [smpl, xpos, channel]
+            let biotac = ArrayNDHost.zeros [nSamples; nPos; nChannels]
+            // [smpl, xpos]
+            let xpos = ArrayNDHost.zeros [nSamples; nPos]
+            // [smpl, dot_xpos, dot_ypos]
+            let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
+
+            let fstDotLine = allCurveSamples |> Seq.head |> snd
+            // dotPos: (col, dot, startXIdx, endXIdx) list
+            let _, dotPosInfo = renderDotLine cfg nSteps fstDotLine
+
+            for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
+                dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine |> fst
+                for xPosIdx, (xPos, channels) in Seq.indexed smpl do
+                    xpos.[[smplIdx; xPosIdx]] <- xPos
+                    biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
+
+
+            match cfg.NSteps with
+            | None ->
+                Seq.singleton {
+                    Biotac = biotac
+                    XPos   = xpos
+                    Dots   = dots
+                    Cut    = 0
+                    DotPos = dotPosInfo
+                }
+            | Some nSteps ->
+                // now one sample was generated for the whole line
+                // it needs to be cut into samples with configured number of steps
+
+                let cutNSteps = nSteps - cfg.TargetLeftCut - cfg.TargetRightCut
+                if cutNSteps % cfg.TargetDownsample <> 0 then
+                    printfn "(NSteps - TargetLeftCut - TargetRightCut) = %d is not \
+                               a multiple of TargetDownsample" cutNSteps
+                let dotsPerCutSample = cutNSteps / cfg.TargetDownsample
+
+                seq {
+                    let mutable biotacPos = 0
+                    let mutable dotPos = 0
+                    let mutable nCuts = 0   
+                    for smpl = 0 to nSamples - 1 do
+                        biotacPos <- 0
+                        dotPos <- 0
+                        nCuts <- 0               
+                        while biotacPos + nSteps <= nPos do
+                            yield {
+                                Biotac = biotac.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1, *]
+                                XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1]
+                                Dots   = dots.[smpl .. smpl, dotPos .. dotPos + dotsPerCutSample - 1, *]
+                                Cut    = nCuts
+                                DotPos = dotPosInfo
+                            }
+
+                            biotacPos <- biotacPos + cutNSteps
+                            dotPos <- dotPos + dotsPerCutSample
+                            nCuts <- nCuts + 1
+
+                    let usedSteps = biotacPos + cfg.TargetLeftCut + cfg.TargetRightCut
+                    let lostSteps = nPos - usedSteps
+                    let lostDots = nDotX - dotPos
+                    printfn "Each Braille line of %d steps (used: %d) was cut in %d samples of %d steps each."
+                        biotac.Shape.[1] usedSteps nCuts nSteps
+                    if lostSteps > 0 then
+                        printfn "Lost %d biotac steps (%.2f %%) and %d dot columns (%.2f %%) \
+                                 per Braile line due to cutting."
+                            lostSteps (float lostSteps / float nPos * 100.) 
+                            lostDots (float lostDots / float nDotX * 100.)                
+                }       
+
+    let saver partition dirDatas =
+        // calculate number of cuts
         let nCuts =
             dirDatas
             |> List.map (fun d -> d.Cut + 1)
             |> List.max
 
-        if not (List.isEmpty dirDatas) then
-            // concatenate data
-            let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
-            let data = {
-                Biotac = concat (fun d -> d.Biotac)
-                XPos   = concat (fun d -> d.XPos)
-                Dots   = concat (fun d -> d.Dots)
-                Cut    = 0
-                DotPos = dirDatas.Head.DotPos
-            }
+        // concatenate data
+        let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
+        let data = {
+            Biotac = concat (fun d -> d.Biotac)
+            XPos   = concat (fun d -> d.XPos)
+            Dots   = concat (fun d -> d.Dots)
+            Cut    = 0
+            DotPos = dirDatas.Head.DotPos
+        }
 
-            // convert dot position list to array
-            let dotPosAry = ArrayNDHost.zeros<int> [data.DotPos.Length; 5]
-            for idx, (col, dot, startIdx, stopIdx, row) in Seq.indexed data.DotPos do
-                dotPosAry.[idx, *] <- [col; dot; startIdx; stopIdx; row] |> ArrayNDHost.ofList
+        // convert dot position list to array
+        let dotPosAry = ArrayNDHost.zeros<int> [data.DotPos.Length; 5]
+        for idx, (col, dot, startIdx, stopIdx, row) in Seq.indexed data.DotPos do
+            dotPosAry.[idx, *] <- [col; dot; startIdx; stopIdx; row] |> ArrayNDHost.ofList
 
-            // save as HDF5
-            ArrayNDHDF.write hdf (partition + "/biotac") data.Biotac
-            ArrayNDHDF.write hdf (partition + "/xpos") data.XPos
-            ArrayNDHDF.write hdf (partition + "/dots") data.Dots
-            ArrayNDHDF.write hdf (partition + "/ncuts") (ArrayNDHost.scalar nCuts)
-            ArrayNDHDF.write hdf (partition + "/dotpos") dotPosAry
-        
+        // save as HDF5
+        ArrayNDHDF.write hdf (partition + "/biotac") data.Biotac
+        ArrayNDHDF.write hdf (partition + "/xpos") data.XPos
+        ArrayNDHDF.write hdf (partition + "/dots") data.Dots
+        ArrayNDHDF.write hdf (partition + "/ncuts") (ArrayNDHost.scalar nCuts)
+        ArrayNDHDF.write hdf (partition + "/dotpos") dotPosAry
+
+    buildMultidirData builder saver cfg.MovementDir cfg.Partitions       
+
+
+type WorldRNNDatasetCfg = {
+
+    /// directory of recorded movements of a Braille pages (contains *.cur/*/recorded.dat and *.dot)
+    MovementDir:     string
+    /// partitions of the data set
+    Partitions:      Map<string, string list>
+    /// output file (HDF5)
+    OutFile:         string
+
+    /// start column of valid tactile data in mm
+    StartCol:           float 
+    /// end column of valid tactile data in mm
+    EndCol:             float
+    /// column step in mm (is 0.02 mm in recorded data)
+    ColRes:             float
+
+    /// length of the history part of a sample in mm
+    HistoryCols:        float
+    /// length of the prediction part of a sample in mm
+    PredCols:           float
+    /// offset from the beginning of one sample to the beginning of the next in mm
+    StrideCols:         float    
+}
+
+type WorldRNNData = {
+    Biotac:         ArrayNDHostT<float>    // [smpl, step, ch]     for cfg.HistoryCols / cfg.ColRes steps
+    Vel:            ArrayNDHostT<float>    // [smpl, step, dim]    for [(cfg.HistoryCols + cfg.PredCols) / cfg.ColRes - 1] steps
+    Offset:         ArrayNDHostT<float>    // [smpl, step, dim=0]  for (cfg.HistoryCols + cfg.PredCols) / cfg.ColRes steps
+    Pos:            ArrayNDHostT<float>    // [smpl, step, dim]    for (cfg.HistoryCols + cfg.PredCols) / cfg.ColRes steps
+}
+
+let buildWorldRNNData (cfg: WorldRNNDatasetCfg) =
+    use hdf = HDF5.OpenWrite cfg.OutFile
+    
+    let builder recMovementDir dotFile =
+        let bp = FsPickler.CreateBinarySerializer()
+ 
+        // read recorded data and interpolate by position
+        let xPos = [cfg.StartCol .. cfg.ColRes .. cfg.EndCol]
+        let nSteps = List.length xPos
+        let allCurveSamples = [
+            for subDir in Directory.EnumerateDirectories recMovementDir do
+                let recordFile = Path.Combine (subDir, "recorded.dat")
+                if File.Exists recordFile then
+                    use fr = File.OpenRead recordFile
+                    let recMovement : RecordedMovement = bp.Deserialize fr
+
+                    let samplesByPos = 
+                        recMovement.Points |> List.map (fun rmp -> fst rmp.DrivenPos, rmp)
+                    let ipFunc fac (a: RecordedMovementPoint) (b: RecordedMovementPoint) = 
+                        let ipValue aEl bEl = fac * bEl + (1. - fac) * aEl 
+                        let ipTuple aTup bTup = ipValue (fst aTup) (fst bTup), ipValue (snd aTup) (snd bTup)
+                        {
+                            RecordedMovementPoint.Biotac = Array.map2 ipValue a.Biotac b.Biotac
+                            RecordedMovementPoint.ControlVel = ipTuple a.ControlVel b.ControlVel
+                            RecordedMovementPoint.Distorted = a.Distorted
+                            RecordedMovementPoint.DrivenPos = ipTuple a.DrivenPos b.DrivenPos
+                            RecordedMovementPoint.SimPos = ipTuple a.SimPos b.SimPos
+                            RecordedMovementPoint.Time = ipValue a.Time b.Time
+                            RecordedMovementPoint.YDist = ipValue a.YDist b.YDist
+                        }                   
+                    let xSamples = interpolate ipFunc xPos samplesByPos
+                    yield xSamples
+        ]
+
+        // calculate dimensions
+        let nChannels = allCurveSamples |> List.head |> List.head |> snd |> fun rmp -> rmp.Biotac.Length
+        let stride = int (cfg.StrideCols / cfg.ColRes)
+        let historySteps = int (cfg.HistoryCols / cfg.ColRes)
+        let predSteps = int (cfg.PredCols / cfg.ColRes)
+        let wholeSteps = historySteps + predSteps
+
+        // extract samples
+        seq {
+            for line in allCurveSamples do
+                let line = List.toArray line
+                for pos in [0 .. stride .. line.Length-1]  do
+                    if pos + historySteps + predSteps <= line.Length then
+
+                        let history = line.[pos .. pos+historySteps-1]
+                        let whole = line.[pos .. pos+historySteps+predSteps-1]
+
+                        yield {
+                            WorldRNNData.Biotac = 
+                                history
+                                |> Seq.map (fun (_, rmp) -> ArrayNDHost.ofArray rmp.Biotac)
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; nChannels])
+                                |> Seq.toList
+                                |> ArrayND.concat 0
+                                |> ArrayND.reshape [1; historySteps; nChannels]
+                            WorldRNNData.Vel =
+                                whole
+                                |> Seq.pairwise
+                                |> Seq.map (fun ((_, rmp2), (_, rmp1)) ->
+                                    (fst rmp2.DrivenPos - fst rmp1.DrivenPos) / (rmp2.Time - rmp1.Time),
+                                    (snd rmp2.DrivenPos - snd rmp1.DrivenPos) / (rmp2.Time - rmp1.Time))      
+                                |> Seq.map (fun (vx, vy) ->  ArrayNDHost.ofList [vx; vy])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 2])
+                                |> Seq.toList
+                                |> ArrayND.concat 0
+                                |> ArrayND.reshape [1; wholeSteps-1; 2]
+                            WorldRNNData.Offset = 
+                                whole
+                                |> Seq.map (fun (_, rmp) -> ArrayNDHost.scalar rmp.YDist)
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 1])
+                                |> Seq.toList
+                                |> ArrayND.concat 0
+                                |> ArrayND.reshape [1; wholeSteps; 1]
+                            WorldRNNData.Pos = 
+                                whole
+                                |> Seq.map (fun (_, rmp) -> 
+                                    ArrayNDHost.ofList [fst rmp.DrivenPos; snd rmp.DrivenPos])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 2])
+                                |> Seq.toList
+                                |> ArrayND.concat 0
+                                |> ArrayND.reshape [1; wholeSteps; 2]
+                        }        
+        }
+
+    let saver partition dirDatas =
+        // concatenate data and save as HDF5
+        let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
+        concat (fun d -> d.Biotac) |> ArrayNDHDF.write hdf (partition + "/biotac") 
+        concat (fun d -> d.Vel)    |> ArrayNDHDF.write hdf (partition + "/vel") 
+        concat (fun d -> d.Offset) |> ArrayNDHDF.write hdf (partition + "/offset") 
+        concat (fun d -> d.Pos)    |> ArrayNDHDF.write hdf (partition + "/pos") 
+
+    buildMultidirData builder saver cfg.MovementDir cfg.Partitions
 
 
 let plotRecordedMovements dir =
