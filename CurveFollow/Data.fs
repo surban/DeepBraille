@@ -59,7 +59,7 @@ let loadCurves srcDir =
 
 let loadPoints srcDir = seq {
     for curve in loadCurves srcDir do 
-        for step = 0 to curve.NSteps - 1 do
+        for step in 0L .. curve.NSteps-1L do
             yield {
                 Time                = curve.Time.[step]
                 DrivenPos           = curve.DrivenPos.[step, *]

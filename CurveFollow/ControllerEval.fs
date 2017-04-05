@@ -243,9 +243,9 @@ let evalController (controllerCfg: Controller.Cfg) curveDir =
     
     let estDistanceFn biotac =
         CudaSup.setContext ()
-        let biotacAry = biotac |> Array.map single |> ArrayNDHost.ofArray |> ArrayND.reshape [1; -1] |> ArrayNDCuda.toDev
+        let biotacAry = biotac |> Array.map single |> ArrayNDHost.ofArray |> ArrayND.reshape [1L; -1L] |> ArrayNDCuda.toDev
         let predAry = mlpController.Predict biotacAry
-        let pred = predAry.[[0; 0]] |> float
+        let pred = predAry.[[0L; 0L]] |> float
         pred
 
     recordControl curveDir estDistanceFn

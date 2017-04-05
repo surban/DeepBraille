@@ -42,11 +42,11 @@ type MLPController (cfg:   MLPControllerCfg) =
 
     let mc = ModelBuilder<single> "MLPController"
 
-    do mc.SetSize nBiotac 23
-    do mc.SetSize nTarget 1
+    do mc.SetSize nBiotac 23L
+    do mc.SetSize nTarget 1L
 
-    let biotac =  mc.Var "Biotac"  [SizeSpec.symbol "BatchSize"; nBiotac]
-    let target =  mc.Var "Target"  [SizeSpec.symbol "BatchSize"; nTarget]
+    let biotac =  mc.Var<single> "Biotac"  [SizeSpec.symbol "BatchSize"; nBiotac]
+    let target =  mc.Var<single> "Target"  [SizeSpec.symbol "BatchSize"; nTarget]
     let mlp = MLP.pars mc cfg.MLP
 
     let mi = mc.Instantiate DevCuda
@@ -62,11 +62,11 @@ type MLPController (cfg:   MLPControllerCfg) =
 
     member this.Train (dataset: TrnValTst<FollowSample>) (trainCfg: Train.Cfg) =
         let opt = Adam (loss, mi.ParameterVector, DevCuda)
-        let optCfg = opt.DefaultCfg
+        let optCfg = Adam.DefaultCfg
 
         let trainable = 
             Train.trainableFromLossExpr mi loss 
-                (fun fs -> VarEnv.ofSeq [biotac, fs.Biotac; target, fs.YDist]) opt optCfg
+                (fun fs -> VarEnv.ofSeq [biotac, fs.Biotac; target, fs.YDist]) Adam.New Adam.DefaultCfg
         Train.train trainable dataset trainCfg
 
     member this.Save filename = mi.SavePars filename     
@@ -107,7 +107,7 @@ let recordedMovementAsFollowSamples (recorded: Movement.RecordedMovement) = seq 
         yield {
             FollowSample.Biotac = rmp.Biotac |> Array.map single |> ArrayNDHost.ofArray
             FollowSample.YDist  = rmp.YDist |> single 
-                                  |> ArrayNDHost.scalar |> ArrayND.reshape [1]
+                                  |> ArrayNDHost.scalar |> ArrayND.reshape [1L]
         }    
 }
 
@@ -117,16 +117,16 @@ let loadRecordedMovementAsCurveDataset baseDirs =
             let nSteps = List.length recorded.Points
             let nChannels = Array.length recorded.Points.[0].Biotac
                     
-            let biotac = ArrayNDHost.zeros [nSteps; nChannels]
-            let ydist = ArrayNDHost.zeros [1; nChannels]
+            let biotac = ArrayNDHost.zeros [int64 nSteps; int64 nChannels]
+            let ydist = ArrayNDHost.zeros [1L; int64 nChannels]
 
             for step, rmp in List.indexed recorded.Points do
-                biotac.[step, *] <- rmp.Biotac |> Array.map single |> ArrayNDHost.ofArray
-                ydist.[[step; 0]] <- rmp.YDist |> single
+                biotac.[int64 step, *] <- rmp.Biotac |> Array.map single |> ArrayNDHost.ofArray
+                ydist.[[int64 step; 0L]] <- rmp.YDist |> single
 
             yield {FollowSample.Biotac=biotac; FollowSample.YDist=ydist}                    
     }            
-    |> Dataset.FromSamples
+    |> Dataset.ofSamples
 
 
 let loadRecordedMovementAsPointDataset baseDirs downsampleFactor = 
@@ -135,7 +135,7 @@ let loadRecordedMovementAsPointDataset baseDirs downsampleFactor =
             yield! recordedMovementAsFollowSamples recorded     
     }            
     |> Seq.everyNth downsampleFactor
-    |> Dataset.FromSamples
+    |> Dataset.ofSamples
      
 
 let loadPointDataset (cfg: Cfg) : TrnValTst<FollowSample> =
@@ -144,7 +144,7 @@ let loadPointDataset (cfg: Cfg) : TrnValTst<FollowSample> =
                       && File.Exists (filename + "-Val.h5")
                       && File.Exists (filename + "-Tst.h5") ->
         printfn "Using cached dataset %s" (Path.GetFullPath filename)
-        TrnValTst.Load filename
+        TrnValTst.load filename
     | _ ->
         let dataset = {
             TrnValTst.Trn = loadRecordedMovementAsPointDataset cfg.TrnDirs cfg.DownsampleFactor
@@ -152,14 +152,14 @@ let loadPointDataset (cfg: Cfg) : TrnValTst<FollowSample> =
             TrnValTst.Tst = loadRecordedMovementAsPointDataset cfg.TstDirs cfg.DownsampleFactor
         }
         match cfg.DatasetCache with
-        | Some filename -> dataset.Save filename
+        | Some filename -> dataset |> TrnValTst.save filename
         | _ -> ()
         dataset
 
      
 let train (cfg: Cfg) =
     printfn "Using configuration:\n%A" cfg
-    let dataset = loadPointDataset cfg |> TrnValTst.ToCuda
+    let dataset = loadPointDataset cfg |> TrnValTst.toCuda
     let mlpController = MLPController cfg.MLPControllerCfg
     let trnRes = mlpController.Train dataset cfg.TrainCfg     
     trnRes.Save cfg.TrnResultFile
@@ -189,7 +189,7 @@ let plotCurvePredictions (cfg: Cfg) curveDir =
             let curve : Movement.XY list = bp.Deserialize tr
 
             // predict
-            let ds = recordedMovementAsFollowSamples recMovement |> Dataset.FromSamples 
+            let ds = recordedMovementAsFollowSamples recMovement |> Dataset.ofSamples 
             let biotac = ds.All.Biotac :?> ArrayNDHostT<_> |> ArrayNDCuda.toDev
             let pred = mlpController.Predict biotac :?> ArrayNDCudaT<_>
             let predDistY = pred.[*, 0] |> ArrayNDCuda.toHost |> ArrayNDHost.toList |> List.map float

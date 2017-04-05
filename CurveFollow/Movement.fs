@@ -329,10 +329,10 @@ let syncTactileCurve (tc: TactileCurve.TactileCurve) (m: Movement) =
 let loadCurves path =
     use file = NPZFile.Open path
     let pos: ArrayNDHostT<float> = file.Get "pos" // pos[dim, idx, smpl]
-    seq { for smpl = 0 to pos.Shape.[2] - 1 do
-              yield [for idx = 0 to pos.Shape.[1] - 1 do
+    seq { for smpl in 0L .. pos.Shape.[2] - 1L do
+              yield [for idx in 0L .. pos.Shape.[1] - 1L do
                          // convert to mm
-                         let col, row = pos.[[0; idx; smpl]], pos.[[1; idx; smpl]]
+                         let col, row = pos.[[0L; idx; smpl]], pos.[[1L; idx; smpl]]
                          yield BrailleCS.charToMM (col, row) ] }  
     |> List.ofSeq
     
@@ -478,10 +478,10 @@ let generateMovementForFile cfgs path outDir =
 
     for curveIdx, curve in List.indexed curves do      
         // write curve to HDF5 file
-        let ary = ArrayNDHost.zeros [List.length curve; 2]
+        let ary = ArrayNDHost.zeros [List.length curve |> int64; 2L]
         for idx, (x, y) in List.indexed curve do
-            ary.[[idx; 0]] <- x
-            ary.[[idx; 1]] <- y
+            ary.[[int64 idx; 0L]] <- x
+            ary.[[int64 idx; 1L]] <- y
         ArrayNDHDF.write curveHdf (sprintf "curve%d" curveIdx) ary
 
         // generate movements
@@ -617,7 +617,7 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
 
     // calculate dot pixels in same resolution as tactile data 
     let dotPos = ResizeArray()
-    let pixels = ArrayNDHost.zeros<float> [nSteps; 3]         // [x, y]
+    let pixels = ArrayNDHost.zeros<float> [nSteps; 3L]         // [x, y]
     let xStepWidth = (cfg.EndCol - cfg.StartCol) / float nSteps
 
     for charIdx, dots in List.indexed dotLine do
@@ -641,14 +641,14 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
                     pixels.[dotXMinIdx .. dotXMaxIdx, dotY] <- ArrayNDHost.scalar 1.0
 
     // then cutoff from left and right and down-sample using averaging
-    let cutPixels = pixels.[cfg.TargetLeftCut .. nSteps - 1 - cfg.TargetRightCut, Fill]
+    let cutPixels = pixels.[cfg.TargetLeftCut .. nSteps - 1L - (int64 cfg.TargetRightCut), Fill]
     let dsPixels = 
         ArrayNDHost.initIndexed 
-            [cutPixels.Shape.[0] / cfg.TargetDownsample; 3]
+            [cutPixels.Shape.[0] / (int64 cfg.TargetDownsample); 3L]
             (function 
              | [dsCol; dsRow] -> 
                 [for i=0 to cfg.TargetDownsample-1 do
-                    yield cutPixels.[[dsCol * cfg.TargetDownsample + i; dsRow]]]
+                    yield cutPixels.[[dsCol * (int64 cfg.TargetDownsample) + (int64 i); int64 dsRow]]]
                 |> List.average
              | _ -> failwith "impossible")
 
@@ -700,7 +700,7 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
   
         // read recorded data and interpolate
         let xPos = [cfg.StartCol .. cfg.ColRes .. cfg.EndCol]
-        let nSteps = List.length xPos
+        let nSteps = List.length xPos |> int64
         let allCurveSamples = [
             for subDir in Directory.EnumerateDirectories recMovementDir do
                 let recordFile = Path.Combine (subDir, "recorded.dat")
@@ -725,9 +725,9 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
             Seq.empty
         else
             // build dataset arrays
-            let nSamples = List.length allCurveSamples
-            let nPos = List.length xPos
-            let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length
+            let nSamples = List.length allCurveSamples |> int64
+            let nPos = List.length xPos |> int64
+            let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length |> int64
             let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> fst |> ArrayND.shape
             let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
 
@@ -745,7 +745,7 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
             for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
                 dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine |> fst
                 for xPosIdx, (xPos, channels) in Seq.indexed smpl do
-                    xpos.[[smplIdx; xPosIdx]] <- xPos
+                    xpos.[[int64 smplIdx; int64 xPosIdx]] <- xPos
                     biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
 
 
@@ -769,28 +769,28 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                 let dotsPerCutSample = cutNSteps / cfg.TargetDownsample
 
                 seq {
-                    let mutable biotacPos = 0
-                    let mutable dotPos = 0
-                    let mutable nCuts = 0   
-                    for smpl = 0 to nSamples - 1 do
-                        biotacPos <- 0
-                        dotPos <- 0
-                        nCuts <- 0               
-                        while biotacPos + nSteps <= nPos do
+                    let mutable biotacPos = 0L
+                    let mutable dotPos = 0L
+                    let mutable nCuts = 0
+                    for smpl in  0L .. nSamples - 1L do
+                        biotacPos <- 0L
+                        dotPos <- 0L
+                        nCuts <- 0         
+                        while biotacPos + int64 nSteps <= int64 nPos do
                             yield {
-                                Biotac = biotac.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1, *]
-                                XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + nSteps - 1]
-                                Dots   = dots.[smpl .. smpl, dotPos .. dotPos + dotsPerCutSample - 1, *]
+                                Biotac = biotac.[smpl .. smpl, biotacPos .. biotacPos + int64 nSteps - 1L, *]
+                                XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + int64 nSteps - 1L]
+                                Dots   = dots.[smpl .. smpl, dotPos .. dotPos + int64 dotsPerCutSample - 1L, *]
                                 Cut    = nCuts
                                 DotPos = dotPosInfo
                             }
 
-                            biotacPos <- biotacPos + cutNSteps
-                            dotPos <- dotPos + dotsPerCutSample
+                            biotacPos <- biotacPos + int64 cutNSteps
+                            dotPos <- dotPos + int64 dotsPerCutSample
                             nCuts <- nCuts + 1
 
-                    let usedSteps = biotacPos + cfg.TargetLeftCut + cfg.TargetRightCut
-                    let lostSteps = nPos - usedSteps
+                    let usedSteps = int biotacPos + cfg.TargetLeftCut + cfg.TargetRightCut
+                    let lostSteps = int nPos - usedSteps
                     let lostDots = nDotX - dotPos
                     printfn "Each Braille line of %d steps (used: %d) was cut in %d samples of %d steps each."
                         biotac.Shape.[1] usedSteps nCuts nSteps
@@ -819,7 +819,7 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
         }
 
         // convert dot position list to array
-        let dotPosAry = ArrayNDHost.zeros<int> [data.DotPos.Length; 5]
+        let dotPosAry = ArrayNDHost.zeros<int> [int64 data.DotPos.Length; 5L]
         for idx, (col, dot, startIdx, stopIdx, row) in Seq.indexed data.DotPos do
             dotPosAry.[idx, *] <- [col; dot; startIdx; stopIdx; row] |> ArrayNDHost.ofList
 
@@ -920,10 +920,10 @@ let buildWorldRNNData (cfg: WorldRNNDatasetCfg) =
                             WorldRNNData.Biotac = 
                                 history
                                 |> Seq.map (fun (_, rmp) -> ArrayNDHost.ofArray rmp.Biotac)
-                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; nChannels])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1L; int64 nChannels])
                                 |> Seq.toList
                                 |> ArrayND.concat 0
-                                |> ArrayND.reshape [1; historySteps; nChannels]
+                                |> ArrayND.reshape [1L; int64 historySteps; int64 nChannels]
                             WorldRNNData.Vel =
                                 whole
                                 |> Seq.pairwise
@@ -931,32 +931,32 @@ let buildWorldRNNData (cfg: WorldRNNDatasetCfg) =
                                     (fst rmp2.DrivenPos - fst rmp1.DrivenPos) / (rmp2.Time - rmp1.Time),
                                     (snd rmp2.DrivenPos - snd rmp1.DrivenPos) / (rmp2.Time - rmp1.Time))      
                                 |> Seq.map (fun (vx, vy) ->  ArrayNDHost.ofList [vx; vy])
-                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 2])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1L; 2L])
                                 |> Seq.toList
                                 |> ArrayND.concat 0
-                                |> ArrayND.reshape [1; wholeSteps-1; 2]
+                                |> ArrayND.reshape [1L; int64 (wholeSteps-1); 2L]
                             WorldRNNData.Offset = 
                                 whole
                                 |> Seq.map (fun (_, rmp) -> ArrayNDHost.scalar rmp.YDist)
-                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 1])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1L; 1L])
                                 |> Seq.toList
                                 |> ArrayND.concat 0
-                                |> ArrayND.reshape [1; wholeSteps; 1]
+                                |> ArrayND.reshape [1L; int64 wholeSteps; 1L]
                             WorldRNNData.Pos = 
                                 whole
                                 |> Seq.map (fun (_, rmp) -> 
                                     ArrayNDHost.ofList [fst rmp.DrivenPos; snd rmp.DrivenPos])
-                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 2])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1L; 2L])
                                 |> Seq.toList
                                 |> ArrayND.concat 0
-                                |> ArrayND.reshape [1; wholeSteps; 2]
+                                |> ArrayND.reshape [1L; int64 wholeSteps; 2L]
                             WorldRNNData.Time =
                                 whole
                                 |> Seq.map (fun (_, rmp) -> ArrayNDHost.scalar rmp.Time)
-                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 1])
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1L; 1L])
                                 |> Seq.toList
                                 |> ArrayND.concat 0
-                                |> ArrayND.reshape [1; wholeSteps]
+                                |> ArrayND.reshape [1L; int64 wholeSteps]
                         }        
         }
 

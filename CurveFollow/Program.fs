@@ -44,10 +44,10 @@ let loadPointDataset datasetDir =
         if File.Exists cache && not noCache then
             Dataset.Load cache
         else
-            let dataset = loadPoints datasetDir |> Dataset.FromSamples 
+            let dataset = loadPoints datasetDir |> Dataset.ofSamples 
             dataset.Save cache
             dataset
-        |> Dataset.ToCuda
+        |> Dataset.toCuda
     printfn "Point %A loaded in %A" dataset sw.Elapsed   
     dataset
 
@@ -60,10 +60,10 @@ let loadCurveDataset datasetDir =
         if File.Exists cache && not noCache then
             Dataset.Load cache
         else
-            let dataset = loadCurves datasetDir |> Dataset.FromSamples 
+            let dataset = loadCurves datasetDir |> Dataset.ofSamples 
             dataset.Save cache
             dataset
-        |> Dataset.ToCuda
+        |> Dataset.toCuda
     printfn "Curve %A loaded in %A" dataset sw.Elapsed   
     dataset
 
