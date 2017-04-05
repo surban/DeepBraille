@@ -132,6 +132,6 @@ let main argv =
     | _ -> parser.Usage ("unknown mode") |> printfn "%s"
 
     // shutdown
-    Basics.Cuda.CudaSup.shutdown ()    
-    Async.Sleep 1000 |> Async.RunSynchronously
+    //Basics.Cuda.CudaSup.shutdown ()    
+    //Async.Sleep 1000 |> Async.RunSynchronously
     0 

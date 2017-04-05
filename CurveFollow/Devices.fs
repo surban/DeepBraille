@@ -40,7 +40,7 @@ module Devices =
 
     let LinmotUpPos = -10.
 
-    let init () =
+    let init () =        
         async {
             do! Linmot.Home () 
             do! Linmot.DriveTo LinmotUpPos
