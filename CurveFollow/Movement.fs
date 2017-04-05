@@ -862,6 +862,7 @@ type WorldRNNData = {
     Vel:            ArrayNDHostT<float>    // [smpl, step, dim]    for [(cfg.HistoryCols + cfg.PredCols) / cfg.ColRes - 1] steps
     Offset:         ArrayNDHostT<float>    // [smpl, step, dim=0]  for (cfg.HistoryCols + cfg.PredCols) / cfg.ColRes steps
     Pos:            ArrayNDHostT<float>    // [smpl, step, dim]    for (cfg.HistoryCols + cfg.PredCols) / cfg.ColRes steps
+    Time:           ArrayNDHostT<float>    // [smpl, step]
 }
 
 let buildWorldRNNData (cfg: WorldRNNDatasetCfg) =
@@ -949,6 +950,13 @@ let buildWorldRNNData (cfg: WorldRNNDatasetCfg) =
                                 |> Seq.toList
                                 |> ArrayND.concat 0
                                 |> ArrayND.reshape [1; wholeSteps; 2]
+                            WorldRNNData.Time =
+                                whole
+                                |> Seq.map (fun (_, rmp) -> ArrayNDHost.scalar rmp.Time)
+                                |> Seq.map (fun ary -> ary |> ArrayND.reshape [1; 1])
+                                |> Seq.toList
+                                |> ArrayND.concat 0
+                                |> ArrayND.reshape [1; wholeSteps]
                         }        
         }
 
@@ -959,6 +967,7 @@ let buildWorldRNNData (cfg: WorldRNNDatasetCfg) =
         concat (fun d -> d.Vel)    |> ArrayNDHDF.write hdf (partition + "/vel") 
         concat (fun d -> d.Offset) |> ArrayNDHDF.write hdf (partition + "/offset") 
         concat (fun d -> d.Pos)    |> ArrayNDHDF.write hdf (partition + "/pos") 
+        concat (fun d -> d.Time)   |> ArrayNDHDF.write hdf (partition + "/time") 
 
     buildMultidirData builder saver cfg.MovementDir cfg.Partitions
 
