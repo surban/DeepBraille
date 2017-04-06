@@ -28,7 +28,7 @@
     <DocumentationFile>bin\Debug\CurveFollow.XML</DocumentationFile>
     <Prefer32Bit>true</Prefer32Bit>
     <PlatformTarget>x64</PlatformTarget>
-    <StartArguments>--mode buildWorldRNNData --cfg "Z:\dev\Deep\DeepBraille\Cfg\WorldRNN\Curv2-RV1-Conf1.fsx"</StartArguments>
+    <StartArguments>--mode movement --cfg .\Cfg\Movements\RandomVelocity-Even1-Set1.fsx</StartArguments>
     <StartWorkingDirectory>..\..\..</StartWorkingDirectory>
     <EnableUnmanagedDebugging>true</EnableUnmanagedDebugging>
     <UseVSHostingProcess>true</UseVSHostingProcess>
@@ -91,6 +91,9 @@
     <Reference Include="FSharp.Charting">
       <HintPath>..\packages\FSharp.Charting.0.90.13\lib\net40\FSharp.Charting.dll</HintPath>
       <Private>True</Private>
+    </Reference>
+    <Reference Include="FSharp.Data.DesignTime">
+      <HintPath>..\packages\FSharp.Data.2.3.2\lib\net40\FSharp.Data.DesignTime.dll</HintPath>
     </Reference>
     <Reference Include="FSharp.Interop.Dynamic">
       <HintPath>..\packages\FSharp.Interop.Dynamic.3.0.0.0\lib\portable-net45+sl50+win\FSharp.Interop.Dynamic.dll</HintPath>

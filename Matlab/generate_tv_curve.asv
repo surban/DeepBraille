@@ -1,0 +1,57 @@
+function [gp, t_pred, v_smpl] = generate_tv_curve(gp, dt, duration, len, lengthscale)
+
+%% constraints
+t_trn=[0; duration; duration*1.1];
+v_trn=[0; len;      len*1.1];
+
+%% GP
+if isempty(gp)
+    opt=optimset('TolX', 1e-1, 'TolFun', 1e-1, 'Display', 'iter');
+    cfs=gpcf_sexp('magnSigma2', 17.1, 'lengthScale', lengthscale, ...
+                  'magnSigma2_prior', prior_fixed(), 'lengthScale_prior', prior_fixed());
+    gpa = gp_set('cf', {cfs}, 'jitterSigma2', 1e-7);
+    gpa.xv=linspace(0, d, 100)';
+    gpam=gp_monotonic(gpa, t_trn, v_trn, 'nvd', 1, 'optimize', 'on', ...
+                      'opt', opt, 'optimf', @fminlbfgs);
+    gp=gp_optim(gpam, t_trn, v_trn);
+end
+
+%% predict mean and covariance
+t_pred=(0:dt:duration)';
+[~,sigma]=gp_pred(gp, t_trn, v_trn, t_pred);
+[mu,Sigma]=gp_jpred(gp, t_trn, v_trn, t_pred);
+
+%% sample curve
+curve_okay=false;
+while ~curve_okay
+    x_smpl = mvnrnd(mu, Sigma, 1)';    
+    v_smpl = diff(x_smpl) ./ diff(t_pred);
+    v_smpl = [v_smpl; 0.0001];
+    v_okay = v_smpl > 0.0 | t_pred < 0.1 | t_pred > duration*0.99;        
+    curve_okay = all(v_okay);
+    %if ~curve_okay, fprintf('rejecting\n'); end
+end    
+
+%% plot      
+clf;
+
+subplot(2,1,1); hold on;
+plot(t_pred, x_smpl, 'k');   
+plot(t_pred, mu, 'b')
+plot(t_pred, mu + sqrt(sigma), 'g');
+plot(t_pred, mu - sqrt(sigma), 'g');
+plot(t_trn, v_trn, 'r*')
+axis manual; axis([0 duration 0 len]); 
+xlabel('t'); ylabel('x'); title('position vs time');
+
+subplot(2,1,2); hold on;
+v_mu = [diff(mu) ./ diff(t_pred); 0.0001];
+v_mu_plus = [diff(mu + sqrt(sigma)) ./ diff(t_pred); 0.0001];
+v_mu_minus = [diff(mu - sqrt(sigma)) ./ diff(t_pred); 0.0001];
+plot(t_pred, v_mu, 'b');
+plot(t_pred, v_mu_plus, 'g');
+plot(t_pred, v_mu_minus, 'g');
+plot(t_pred, v_smpl, 'k');
+axis manual; axis([0 duration -0.1 max(v_smpl)*1.1]); 
+xlabel('t'); ylabel('v'); title('velocity vs time');
+

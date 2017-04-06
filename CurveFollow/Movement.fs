@@ -16,6 +16,7 @@ open RTools
 
 
 type XY = float * float
+type TV = float * float
 
 /// Braille coordinate system.
 module BrailleCS =
@@ -145,7 +146,7 @@ let uniform lower upper =
     
 
 
-let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) = 
+let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) (xVels: TV list) = 
     let tblCfg = {
         XYTableSim.Accel  = cfg.Accel, cfg.Accel 
         XYTableSim.Dt     = cfg.Dt
@@ -171,8 +172,8 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) =
         let trgt = cy + ofst
         let trgt = min trgt (baseY + maxOffset)
         let trgt = max trgt (baseY - maxOffset)
-        let cVel = cfg.VelX, controlPid.Simulate trgt y t
-        cVel, abs ofst < 1e-3, ()
+        let yVel = controlPid.Simulate trgt y t
+        yVel, abs ofst < 1e-3, ()
 
     let handleDistortions dc x y t cy slope distState =
         let cPos, nextState =
@@ -194,9 +195,9 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) =
                 if x >= hu then cy, InactiveUntil (x + dc.NotAgainFor)
                 else y, distState
 
-        let cVel = cfg.VelX, controlPid.Simulate cPos y t      
+        let yVel = controlPid.Simulate cPos y t      
         let distorted = match distState with InactiveUntil _ -> false | _ -> true
-        cVel, distorted, nextState
+        yVel, distorted, nextState
 
     let handleRandomVelocities rvCfg x y t cy slope rvState =
         let nextState =
@@ -219,12 +220,23 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) =
                 }
             else rvState
 
-        let cVel = cfg.VelX, nextState.YVel
-        cVel, true, nextState
+        let yVel = nextState.YVel
+        yVel, true, nextState
 
-    let rec generate curve (state: XYTableSim.State) handler (handlerState: 'HandlerState) = seq {
+    let rec getXVel xVels t =
+        match xVels with
+        | (t1,v1) :: (t2,v2) :: _ when t1 <= t && t < t2 ->
+            let fac = (t2 - t) / (t2 - t1)
+            fac * v1 + (1. - fac) * v2, xVels
+        | (t1,v1) :: _ when t < t1 -> cfg.VelX, xVels
+        | _ :: rVels -> getXVel rVels t
+        | [] -> cfg.VelX, xVels
+
+    let rec generate curve xVels (state: XYTableSim.State) handler (handlerState: 'HandlerState) = seq {
         let x, y = state.Pos
         let t = state.Time
+        let xVel, xVels = getXVel xVels t
+        //printfn "time: %f x: %f y: %f  XVel: %f" t x y xVel
         match curve with
         | [] -> ()
         | (x1,y1) :: (x2,y2) :: _ when x1 <= x && x < x2 ->
@@ -233,7 +245,8 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) =
             let cy = fac * y1 + (1. - fac) * y2
             let slope = (y2 - y1) / (x2 - x1)
 
-            let cVel, distorted, nextHandlerState = handler x y t cy slope handlerState
+            let yVel, distorted, nextHandlerState = handler x y t cy slope handlerState
+            let cVel = xVel, yVel
             yield {
                 Time        = state.Time
                 Pos         = state.Pos
@@ -241,11 +254,11 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) =
                 CurveY      = cy
                 Distorted   = distorted 
             }
-            yield! generate curve (XYTableSim.step cVel tblCfg state) handler nextHandlerState               
+            yield! generate curve xVels (XYTableSim.step cVel tblCfg state) handler nextHandlerState               
 
         | (x1,y1) :: _ when x < x1 ->
             // x position is left of curve start
-            let cVel = cfg.VelX, 0.
+            let cVel = xVel, 0.
             yield {
                 Time        = state.Time
                 Pos         = state.Pos
@@ -253,18 +266,19 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) =
                 CurveY      = y1
                 Distorted   = false
             }            
-            yield! generate curve (XYTableSim.step cVel tblCfg state) handler handlerState
+            yield! generate curve xVels (XYTableSim.step cVel tblCfg state) handler handlerState
+
         | _ :: rCurve ->
             // move forward on curve
-            yield! generate rCurve state handler handlerState
+            yield! generate rCurve xVels state handler handlerState
     }
 
     let state = {XYTableSim.Time=0.; XYTableSim.Pos=startPos; XYTableSim.Vel=0., 0. }
     let movement = 
         match cfg.Mode with
-        | FixedOffset ofst -> generate curve state (handleFixedOffset ofst) ()
-        | Distortions dc -> generate curve state (handleDistortions dc) (InactiveUntil 0.3)
-        | RandomVelocities rvCfg -> generate curve state (handleRandomVelocities rvCfg) {YVel=0.; HoldUntil=0.}
+        | FixedOffset ofst -> generate curve xVels state (handleFixedOffset ofst) ()
+        | Distortions dc -> generate curve xVels state (handleDistortions dc) (InactiveUntil 0.3)
+        | RandomVelocities rvCfg -> generate curve xVels state (handleRandomVelocities rvCfg) {YVel=0.; HoldUntil=0.}
 
     {
         StartPos    = startPos
@@ -469,8 +483,19 @@ let plotRecordedMovement (path: string) (curve: XY list) (recMovement: RecordedM
     R.dev_off() |> ignore
 
 
+let loadXVels dir = 
+    seq {
+        for path in Directory.EnumerateFiles(dir, "*.h5") do
+            let velName = Path.GetFileNameWithoutExtension path
+            use velHdf = HDF5.OpenRead path
+            let velData : ArrayNDHostT<float> = ArrayNDHDF.read velHdf "vels"
+            let ts = velData.[*, 0L] |> ArrayNDHost.toList
+            let vs = velData.[*, 1L] |> ArrayNDHost.toList
+            let tv = List.zip ts vs
+            yield velName, tv
+    } |> Map.ofSeq
 
-let generateMovementForFile cfgs path outDir =
+let generateMovementForFile cfgs path outDir xVelDir =
     let rnd = Random ()
     let baseName = Path.Combine(Path.GetDirectoryName path, Path.GetFileNameWithoutExtension path)
     let curves = loadCurves path
@@ -484,25 +509,33 @@ let generateMovementForFile cfgs path outDir =
             ary.[[int64 idx; 1L]] <- y
         ArrayNDHDF.write curveHdf (sprintf "curve%d" curveIdx) ary
 
-        // generate movements
-        for cfgIdx, cfg in List.indexed cfgs do
-            let dir = Path.Combine(outDir, sprintf "Curve%dCfg%d" curveIdx cfgIdx)
-            Directory.CreateDirectory dir |> ignore
+        // load x velocities
+        let xVels = 
+            match xVelDir with
+            | Some xVelDir -> loadXVels (Path.Combine(xVelDir, sprintf "curve%d" curveIdx))
+            | None -> Map ["", []]
+                
+        for KeyValue(xVelName, xVel) in xVels do
+            // generate movements
+            for cfgIdx, cfg in List.indexed cfgs do
+                let dir = Path.Combine(outDir, sprintf "Curve%d%sCfg%d" curveIdx xVelName cfgIdx)
+                Directory.CreateDirectory dir |> ignore
 
-            let movement = generateMovement cfg rnd curve
-            plotMovement (Path.Combine (dir, "movement.pdf")) curve movement
+                let movement = generateMovement cfg rnd curve xVel
+                plotMovement (Path.Combine (dir, "movement.pdf")) curve movement
 
-            if cfg.SkipFirstAndLast && (curveIdx = 0 || curveIdx = 6) then
-                ()
-            else
-                let p = FsPickler.CreateBinarySerializer()
-                use tw = File.OpenWrite(Path.Combine (dir, "movement.dat"))
-                p.Serialize(tw, movement)
-                use tw = File.OpenWrite(Path.Combine (dir, "curve.dat"))
-                p.Serialize(tw, curve)
+                if cfg.SkipFirstAndLast && (curveIdx = 0 || curveIdx = 6) then
+                    ()
+                else
+                    let p = FsPickler.CreateBinarySerializer()
+                    use tw = File.OpenWrite(Path.Combine (dir, "movement.dat"))
+                    p.Serialize(tw, movement)
+                    use tw = File.OpenWrite(Path.Combine (dir, "curve.dat"))
+                    p.Serialize(tw, curve)
             
 type GenCfg = {
     CurveDir:           string
+    XVelDir:            string option
     MovementDir:        string
     MovementCfgs:       MovementCfg list
 }
@@ -510,8 +543,10 @@ type GenCfg = {
 let generateMovementUsingCfg cfg  =
     for file in Directory.EnumerateFiles(cfg.CurveDir, "*.cur.npz") do
         printfn "%s" (Path.GetFullPath file)
-        let outDir = Path.Combine(cfg.MovementDir, Path.GetFileNameWithoutExtension file)
-        generateMovementForFile cfg.MovementCfgs file outDir
+        let baseName = Path.GetFileNameWithoutExtension file
+        let outDir = Path.Combine(cfg.MovementDir, baseName)
+        let xVelDir = cfg.XVelDir |> Option.map (fun xVelDir -> Path.Combine(xVelDir, baseName))
+        generateMovementForFile cfg.MovementCfgs file outDir xVelDir
 
 
 /// Records data for all */movement.json files in the given directory.
