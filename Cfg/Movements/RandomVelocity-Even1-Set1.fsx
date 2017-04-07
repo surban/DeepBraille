@@ -24,7 +24,7 @@ let baseMovement = {
 
 let cfg = {
     CurveDir        = Config.baseDir + "/Data/DeepBraille/Curves/even1"
-    MovementDir     = Config.baseDir + "/Data/DeepBraille/Movements/RandomVelocity-Even1-Set"
+    MovementDir     = Config.baseDir + "/Data/DeepBraille/Movements/RandomVelocity-Even1-Set1"
     XVelDir         = Some (Config.baseDir + "/Data/DeepBraille/XVels/Set1")
     MovementCfgs    = 
         [

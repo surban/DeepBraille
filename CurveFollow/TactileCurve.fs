@@ -13,6 +13,7 @@ type XY = float * float
 
 /// Drive point.
 type DrivePoint = {
+    Time:               float
     XPos:               float
     YPos:               float
 }
@@ -22,7 +23,7 @@ type DriveCurve = {
     IndentorPos:        float
     StartPos:           XY
     Accel:              float
-    XVel:               float
+    StartXVel:          float
     Points:             DrivePoint list
 }
 
@@ -58,7 +59,8 @@ let record (curve: DriveCurve) =
     let recorder = Recorder<TactilePoint> sensors
 
     let sw = Stopwatch()
-    let pidController = PID.Controller XYTableSim.pidCfg
+    let xPidCntrl = PID.Controller XYTableSim.pidCfg
+    let yPidCntrl = PID.Controller XYTableSim.pidCfg
     let rec pidControl (points: DrivePoint list) =
         let t = (float sw.ElapsedMilliseconds) / 1000.
         let x, y = Devices.XYTable.CurrentPos 
@@ -70,19 +72,20 @@ let record (curve: DriveCurve) =
 
         match points with
         | _ when x > 142. -> ()
-        | [] -> ()
-        | {XPos=cx; YPos=tYPos}::({XPos=ncx; YPos=nYPos}::_ as rPoints) 
-                when cx <= x && x < ncx ->
-            let fac = (ncx - x) * (ncx - cx)
-            let yTrgt = fac * tYPos + (1.-fac) * nYPos
-            let yVel = pidController.Control yTrgt y 
-            Devices.XYTable.DriveWithVel ((curve.XVel, yVel))
+        | {Time=ct; XPos=cx; YPos=cy} :: {Time=nct; XPos=ncx; YPos=ncy} ::_  when ct <= t && t < nct ->
+            let fac = (nct - t) * (nct - ct)
+            let xTrgt = fac * cx + (1.-fac) * ncx
+            let yTrgt = fac * cy + (1.-fac) * ncy
+            let xVel = xPidCntrl.Control xTrgt x
+            let yVel = yPidCntrl.Control yTrgt y 
+            Devices.XYTable.DriveWithVel ((xVel, yVel))
             pidControl points
-        | {XPos=cx}::_ when x < cx ->
-            Devices.XYTable.DriveWithVel ((curve.XVel, 0.0))
+        | {Time=ct} :: _ when t < ct ->
+            Devices.XYTable.DriveWithVel ((curve.StartXVel, 0.0))
             pidControl points
         | _::rCurve ->
             pidControl rCurve
+        | [] -> ()
 
     recorder.Start ()
     sw.Start()

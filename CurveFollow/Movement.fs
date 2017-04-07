@@ -120,7 +120,7 @@ type Movement = {
     StartPos:       XY
     IndentorPos:    float
     Accel:          float
-    VelX:           float
+    StartVelX:      float
     Points:         MovementPoint list
 }
 
@@ -284,7 +284,7 @@ let generateMovement (cfg: MovementCfg) (rnd: System.Random) (curve: XY list) (x
         StartPos    = startPos
         IndentorPos = cfg.IndentorPos
         Accel       = cfg.Accel
-        VelX        = cfg.VelX
+        StartVelX   = cfg.VelX
         Points      = movement |> Seq.toList
     }
 
@@ -294,9 +294,10 @@ let toDriveCurve (movement: Movement) =
         TactileCurve.IndentorPos = movement.IndentorPos
         TactileCurve.StartPos    = movement.StartPos
         TactileCurve.Accel       = movement.Accel
-        TactileCurve.XVel        = movement.VelX
+        TactileCurve.StartXVel   = movement.StartVelX     
         TactileCurve.Points      = [ for mp in movement.Points -> 
                                      {
+                                        TactileCurve.Time = mp.Time
                                         TactileCurve.XPos = fst mp.Pos
                                         TactileCurve.YPos = snd mp.Pos
                                      } ]            
@@ -367,6 +368,7 @@ let plotMovement (path: string) (curve: XY list) (movement: Movement) =
     let velY = (Array.pairwise times, Array.pairwise posY)
                ||> Array.map2 (fun (tb, ta) (b, a) -> (b - a) / (tb - ta))
                |> Array.append [| 0. |]
+    let posX, posY = toArray (fun (p: MovementPoint) -> p.Pos) movement.Points
     let controlVelX, controlVelY = toArray (fun (p: MovementPoint) -> p.ControlVel) movement.Points
     let distorted = movement.Points |> List.map (fun p -> p.Distorted) |> Array.ofList
 
@@ -374,19 +376,31 @@ let plotMovement (path: string) (curve: XY list) (movement: Movement) =
     R.par2 ("oma", [0; 0; 0; 0])
     R.par2 ("mar", [3.2; 2.6; 1.0; 0.5])
     R.par2 ("mgp", [1.7; 0.7; 0.0])
-    R.par2 ("mfrow", [2; 1])
+    R.par2 ("mfrow", [6; 1])
 
-    R.plot2 ([0; 150], [curveY.[0] - 10.; curveY.[0] + 10.], "position", "x", "y")
+    R.plot2 ([0; 150], [curveY.[0] - 10.; curveY.[0] + 10.], "curve", "x", "y")
     R.abline(h=curveY.[0]) |> ignore
     R.lines2 (curveX, curveY, "black")
     R.lines2 (posX, posY, "blue")
     R.legend (115., curveY.[0] + 10., ["curve"; "movement"], col=["black"; "blue"], lty=[1;1]) |> ignore
+
+    R.plot2 ([0; 25], [0; 150], "position", "t", "x")
+    R.lines2 (times, posX, "black")
+
+    R.plot2 ([0; 25], [posY.[0] - 10.; posY.[0] + 10.], "position", "t", "y")
+    R.lines2 (times, posY, "black")
 
     R.plot2 ([0; 150], [-20; 20], "velocity", "x", "y velocity")
     R.abline(h=0) |> ignore
     R.lines2 (posX, controlVelY, "blue")
     R.lines2 (posX, velY, "red")
     R.legend (125., 20, ["control"; "table"], col=["blue"; "red"], lty=[1;1]) |> ignore
+
+    R.plot2 ([0; 25], [0; 20], "velocity", "t", "x")
+    R.lines2 (times, controlVelX, "black")
+
+    R.plot2 ([0; 25], [-20; 20], "velocity", "t", "y")
+    R.lines2 (times, controlVelY, "black")
 
     R.dev_off() |> ignore
 
@@ -427,6 +441,7 @@ let plotTactile (path: string) (curve: XY list) (tactile: TactileCurve.TactileCu
 
 let plotRecordedMovement (path: string) (curve: XY list) (recMovement: RecordedMovement) (predDistY: float list option) =
     let curveX, curveY = toArray id curve
+    let times = recMovement.Points |> List.map (fun p -> p.Time) |> List.toArray
     let simPosX, simPosY = recMovement.Points |> toArray (fun p -> p.SimPos) 
     let drivenPosX, drivenPosY = recMovement.Points |> toArray (fun p -> p.DrivenPos) 
     let controlVelX, controlVelY = recMovement.Points |> toArray (fun p -> p.ControlVel) 
@@ -434,16 +449,18 @@ let plotRecordedMovement (path: string) (curve: XY list) (recMovement: RecordedM
     let distorted = recMovement.Points |> List.map (fun p -> p.Distorted) |> Array.ofList
     let biotac = recMovement.Points |> List.map (fun p -> p.Biotac)
 
+    let dt = times.[1] - times.[0]
     let left, right = Array.min drivenPosX, Array.max drivenPosX
+    let tLeft, tRight = Array.min times, Array.max times
 
-    let dt = recMovement.Points.[1].Time - recMovement.Points.[0].Time
-    let drivenVelY =
-        drivenPosY
+    let posToVel pos =
+        pos
         |> Array.toSeq
         |> Seq.pairwise
         |> Seq.map (fun (a, b) -> (b - a) / dt)
         |> Seq.append (Seq.singleton 0.)
-        |> Array.ofSeq
+        |> Array.ofSeq    
+    let drivenVelX, drivenVelY = posToVel drivenPosX, posToVel drivenPosY
 
     R.pdf (path) |> ignore
     R.par2 ("oma", [0; 0; 0; 0])
@@ -457,7 +474,7 @@ let plotRecordedMovement (path: string) (curve: XY list) (recMovement: RecordedM
     R.lines2 (simPosX, simPosY, "blue")
     R.lines2 (drivenPosX, drivenPosY, "yellow")
     R.legend (125., curveY.[0] + 10., ["curve"; "movement"; "driven"], col=["black"; "blue"; "yellow"], lty=[1;1]) |> ignore
-
+    
     R.plot2 ([left; right], [-15; 15], "velocity", "x", "y velocity")
     R.abline(h=0) |> ignore
     R.lines2 (drivenPosX, controlVelY, "blue")
@@ -472,6 +489,51 @@ let plotRecordedMovement (path: string) (curve: XY list) (recMovement: RecordedM
         R.lines2 (drivenPosX, predDistY, "red")
         R.legend (125., 8, ["true"; "predicted"], col=["blue"; "red"], lty=[1;1]) |> ignore
     | None -> ()
+
+    // plot biotac
+    let biotacImg = array2D biotac |> ArrayNDHost.ofArray2D |> ArrayND.transpose  // [chnl, smpl]
+    let minVal, maxVal = ArrayND.minAxis 1 biotacImg, ArrayND.maxAxis 1 biotacImg
+    let scaledImg = (biotacImg - minVal.[*, NewAxis]) / (maxVal - minVal).[*, NewAxis]
+    R.image2 (ArrayNDHost.toArray2D scaledImg, lim=(0.0, 1.0),
+              xlim=(left, right), colormap=Gray, title="biotac", xlabel="x", ylabel="channel")
+
+    R.dev_off() |> ignore
+
+let plotRecordedMovement2 (path: string) (curve: XY list) (recMovement: RecordedMovement) (predDistY: float list option) =
+    let curveX, curveY = toArray id curve
+    let times = recMovement.Points |> List.map (fun p -> p.Time) |> List.toArray
+    let simPosX, simPosY = recMovement.Points |> toArray (fun p -> p.SimPos) 
+    let drivenPosX, drivenPosY = recMovement.Points |> toArray (fun p -> p.DrivenPos) 
+    let controlVelX, controlVelY = recMovement.Points |> toArray (fun p -> p.ControlVel) 
+    let distY = recMovement.Points |> List.map (fun p -> p.YDist) |> Array.ofList
+    let distorted = recMovement.Points |> List.map (fun p -> p.Distorted) |> Array.ofList
+    let biotac = recMovement.Points |> List.map (fun p -> p.Biotac)
+
+    let dt = times.[1] - times.[0]
+    let left, right = Array.min drivenPosX, Array.max drivenPosX
+    let tLeft, tRight = Array.min times, Array.max times
+
+    let posToVel pos =
+        pos
+        |> Array.toSeq
+        |> Seq.pairwise
+        |> Seq.map (fun (a, b) -> (b - a) / dt)
+        |> Seq.append (Seq.singleton 0.)
+        |> Array.ofSeq    
+    let drivenVelX, drivenVelY = posToVel drivenPosX, posToVel drivenPosY
+
+    R.pdf (path) |> ignore
+    R.par2 ("oma", [0; 0; 0; 0])
+    R.par2 ("mar", [3.2; 2.6; 1.0; 0.5])
+    R.par2 ("mgp", [1.7; 0.7; 0.0])
+    R.par2 ("mfrow", [3; 1])
+
+    R.plot2 ([tLeft; tRight], [left; right], "position", "t", "x")
+    R.lines2 (times, drivenPosX, "black")
+
+    R.plot2 ([tLeft; tRight], [0; 25], "velocity", "t", "vx")
+    R.lines2 (times, drivenVelX, "black")
+    R.lines2 (times, controlVelX, "yellow")
 
     // plot biotac
     let biotacImg = array2D biotac |> ArrayNDHost.ofArray2D |> ArrayND.transpose  // [chnl, smpl]
@@ -574,8 +636,8 @@ let recordMovements dir =
             let recMovement = syncTactileCurve tactileCurve movement
             use tw = File.Create recordFile
             bp.Serialize (tw, recMovement)
-
             plotRecordedMovement (Path.Combine (subDir, "recorded.pdf")) curve recMovement None
+            plotRecordedMovement2 (Path.Combine (subDir, "recorded2.pdf")) curve recMovement None
 
 
 /// Linearly interpolates the samples at the given times.
@@ -1020,5 +1082,6 @@ let plotRecordedMovements dir =
             let curve : XY list = bp.Deserialize tr
 
             plotRecordedMovement (Path.Combine (subDir, "recorded.pdf")) curve recMovement None
+            plotRecordedMovement2 (Path.Combine (subDir, "recorded2.pdf")) curve recMovement None
 
             

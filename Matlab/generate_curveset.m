@@ -4,9 +4,9 @@ rng default;
 base_dir='..\\Data\\DeepBraille\\XVels\\Set1';
 dt=0.05;
 duration=25.0;
-len=150;
+len=141;
 lengthscale=3.75;
-n_samples=10;
+n_samples=5;
 
 gp=[];
 hfig=figure(1);

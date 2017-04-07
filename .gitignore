@@ -238,5 +238,7 @@ result.json
 
 /Data/DeepBraille/Movements
 /Data/DeepBraille/Distortions
+/Data/DeepBraille/XVels
+/Data/DeepBraille/Curves/*/*.cur.h5
 
-
+*.asv
