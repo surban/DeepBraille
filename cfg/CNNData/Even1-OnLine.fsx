@@ -8,7 +8,7 @@ open Movement
 open Models
 
 let cfg : CNNDatasetCfg = {
-    MovementDir         = Config.baseDir + @"\Data\DeepBraille\Data\DeepBraille\Movements\Even1-OnLine"
+    MovementDir         = Config.baseDir + @"\Data\DeepBraille\Movements\Even1-OnLine"
     Partitions          = ["trn", ["00"; "01"; "02"; "03"; "04"; "05"; "06"; "07"]
                            "val", ["08"]
                            "tst", ["09"]]
@@ -21,7 +21,7 @@ let cfg : CNNDatasetCfg = {
     NSteps              = None
 
     StartTime           = 0.5
-    EndTime             = 24.5
+    EndTime             = 22.5 // 24.5
     TimeRes             = 0.01
 
     TargetLeftCut       = 0

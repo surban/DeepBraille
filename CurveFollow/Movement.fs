@@ -675,6 +675,13 @@ type CNNDatasetCfg = {
     /// with the given number of steps.
     NSteps:             int option
 
+    /// start time in seconds
+    StartTime:          float
+    /// end time in seconds
+    EndTime:            float
+    /// time resolution in seconds
+    TimeRes:            float
+
     /// number of tactile data steps to cut from the left for the target dot values 
     TargetLeftCut:      int
     /// number of tactile data steps to cut from the right for the target dot values 
@@ -735,10 +742,10 @@ let renderDotLine (cfg: CNNDatasetCfg) nSteps (dotLine: bool[] list)  =
                 dotPos.Add((charIdx, dotIdx, dotXMinIdx, dotXMaxIdx, dotY))
 
                 if isOn then
-                    pixels.[dotXMinIdx .. dotXMaxIdx, dotY] <- ArrayNDHost.scalar 1.0
+                    pixels.[int64 dotXMinIdx .. int64 dotXMaxIdx, int64 dotY] <- ArrayNDHost.scalar 1.0
 
     // then cutoff from left and right and down-sample using averaging
-    let cutPixels = pixels.[cfg.TargetLeftCut .. nSteps - 1L - (int64 cfg.TargetRightCut), Fill]
+    let cutPixels = pixels.[int64 cfg.TargetLeftCut .. nSteps - 1L - (int64 cfg.TargetRightCut), Fill]
     let dsPixels = 
         ArrayNDHost.initIndexed 
             [cutPixels.Shape.[0] / (int64 cfg.TargetDownsample); 3L]
@@ -779,10 +786,25 @@ let buildMultidirData builder saver movementDir partitions =
 type CNNData = {
     Biotac:         ArrayNDHostT<float>
     XPos:           ArrayNDHostT<float>
+    TTime:          ArrayNDHostT<float>
+    TBiotac:        ArrayNDHostT<float>
+    TXPos:          ArrayNDHostT<float>
     Dots:           ArrayNDHostT<float>
     Cut:            int
     DotPos:         (int * int * int * int * int) list
 }
+
+
+type CurveSampleT = {
+    XSamples:       (float * float[]) list
+    TSamples:       (float * (float * float[])) list
+    Dots:           bool[] list
+}
+
+module CurveSample =
+    let xSamples cs = cs.XSamples
+    let tSamples cs = cs.TSamples
+    let dots cs = cs.Dots
 
 
 /// Extracts data from recorded movements suitable for learning braille characters with CNNs.
@@ -797,6 +819,7 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
   
         // read recorded data and interpolate
         let xPos = [cfg.StartCol .. cfg.ColRes .. cfg.EndCol]
+        let ts = [cfg.StartTime .. cfg.TimeRes .. cfg.EndTime]
         let nSteps = List.length xPos |> int64
         let allCurveSamples = [
             for subDir in Directory.EnumerateDirectories recMovementDir do
@@ -805,17 +828,26 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                     use fr = File.OpenRead recordFile
                     let recMovement : RecordedMovement = bp.Deserialize fr
 
+                    // get samples based on x coordinate
                     let timeSamples = 
                         recMovement.Points
                         |> List.map (fun rmp -> fst rmp.DrivenPos, rmp.Biotac)
                     let ipFunc fac = Array.map2 (fun aEl bEl -> fac * bEl + (1. - fac) * aEl)
                     let xSamples = interpolate ipFunc xPos timeSamples
 
+                    // get samples based on time
+                    let timeSamples2 =
+                        recMovement.Points
+                        |> List.map (fun rmp -> rmp.Time, (fst rmp.DrivenPos, rmp.Biotac))
+                    let ipFunc2 fac (x1, biotac1) (x2, biotac2) = 
+                        fac * x2 + (1. - fac) * x1, ipFunc fac biotac1 biotac2
+                    let tSamples = interpolate ipFunc2 ts timeSamples2
+
                     // get associated dot line
                     let _, y = recMovement.Points.Head.DrivenPos
                     let row = (y - cfg.YOffset) / cfg.LineDist |> round |> int
 
-                    yield xSamples, allDots.[row]
+                    yield {XSamples=xSamples; TSamples=tSamples; Dots=allDots.[row]}
         ]
 
         if List.isEmpty allCurveSamples then
@@ -824,8 +856,9 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
             // build dataset arrays
             let nSamples = List.length allCurveSamples |> int64
             let nPos = List.length xPos |> int64
-            let nChannels = allCurveSamples |> List.head |> fst |> List.head |> snd |> Array.length |> int64
-            let dotPixelsShape = allCurveSamples |> List.head |> snd |> renderDotLine cfg nSteps |> fst |> ArrayND.shape
+            let nTs = List.length ts |> int64
+            let nChannels = allCurveSamples |> List.head |> CurveSample.xSamples |> List.head |> snd |> Array.length |> int64
+            let dotPixelsShape = allCurveSamples |> List.head |> CurveSample.dots |> renderDotLine cfg nSteps |> fst |> ArrayND.shape
             let nDotX, nDotY = dotPixelsShape.[0], dotPixelsShape.[1]
 
             // [smpl, xpos, channel]
@@ -835,25 +868,40 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
             // [smpl, dot_xpos, dot_ypos]
             let dots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
 
-            let fstDotLine = allCurveSamples |> Seq.head |> snd
+            // [smpl, t, channel]
+            let tBiotac = ArrayNDHost.zeros [nSamples; nTs; nChannels]
+            // [smpl, t]
+            let tXpos = ArrayNDHost.zeros [nSamples; nTs]
+            // [smpl, t]
+            let tTime = ArrayNDHost.zeros [nSamples; nTs]
+            // [smpl, dot_xpos, dot_ypos]
+            let tDots = ArrayNDHost.zeros [nSamples; nDotX; nDotY]
+
+            let fstDotLine = allCurveSamples |> Seq.head |> CurveSample.dots
             // dotPos: (col, dot, startXIdx, endXIdx) list
             let _, dotPosInfo = renderDotLine cfg nSteps fstDotLine
 
-            for smplIdx, (smpl, dotLine) in Seq.indexed allCurveSamples do
-                dots.[smplIdx, Fill, Fill] <- renderDotLine cfg nSteps dotLine |> fst
-                for xPosIdx, (xPos, channels) in Seq.indexed smpl do
+            for smplIdx, cs in Seq.indexed allCurveSamples do
+                dots.[int64 smplIdx, Fill, Fill] <- renderDotLine cfg nSteps cs.Dots |> fst
+                for xPosIdx, (xPos, channels) in Seq.indexed cs.XSamples do
                     xpos.[[int64 smplIdx; int64 xPosIdx]] <- xPos
-                    biotac.[smplIdx, xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
-
+                    biotac.[int64 smplIdx, int64 xPosIdx, Fill] <- channels |> ArrayNDHost.ofArray           
+                for tIdx, (t, (xPos, channels)) in Seq.indexed cs.TSamples do
+                    tTime.[[int64 smplIdx; int64 tIdx]] <- t
+                    tXpos.[[int64 smplIdx; int64 tIdx]] <- xPos
+                    tBiotac.[int64 smplIdx, int64 tIdx, Fill] <- channels |> ArrayNDHost.ofArray       
 
             match cfg.NSteps with
             | None ->
                 Seq.singleton {
-                    Biotac = biotac
-                    XPos   = xpos
-                    Dots   = dots
-                    Cut    = 0
-                    DotPos = dotPosInfo
+                    Biotac  = biotac
+                    XPos    = xpos
+                    TTime   = tTime
+                    TBiotac = tBiotac
+                    TXPos   = tXpos
+                    Dots    = dots
+                    Cut     = 0
+                    DotPos  = dotPosInfo
                 }
             | Some nSteps ->
                 // now one sample was generated for the whole line
@@ -874,12 +922,15 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                         dotPos <- 0L
                         nCuts <- 0         
                         while biotacPos + int64 nSteps <= int64 nPos do
-                            yield {
-                                Biotac = biotac.[smpl .. smpl, biotacPos .. biotacPos + int64 nSteps - 1L, *]
-                                XPos   = xpos.[smpl .. smpl, biotacPos .. biotacPos + int64 nSteps - 1L]
-                                Dots   = dots.[smpl .. smpl, dotPos .. dotPos + int64 dotsPerCutSample - 1L, *]
-                                Cut    = nCuts
-                                DotPos = dotPosInfo
+                            yield {                               
+                                Biotac  = biotac.[smpl .. smpl, biotacPos .. biotacPos + int64 nSteps - 1L, *]
+                                XPos    = xpos.[smpl .. smpl, biotacPos .. biotacPos + int64 nSteps - 1L]
+                                TTime   = tTime.[smpl .. smpl, *]
+                                TBiotac = tBiotac.[smpl .. smpl, *, *]
+                                TXPos   = tXpos.[smpl .. smpl, *]
+                                Dots    = dots.[smpl .. smpl, dotPos .. dotPos + int64 dotsPerCutSample - 1L, *]
+                                Cut     = nCuts
+                                DotPos  = dotPosInfo
                             }
 
                             biotacPos <- biotacPos + int64 cutNSteps
@@ -908,21 +959,27 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
         // concatenate data
         let concat extractor = dirDatas |> List.map extractor |> ArrayND.concat 0 
         let data = {
-            Biotac = concat (fun d -> d.Biotac)
-            XPos   = concat (fun d -> d.XPos)
-            Dots   = concat (fun d -> d.Dots)
-            Cut    = 0
-            DotPos = dirDatas.Head.DotPos
+            Biotac  = concat (fun d -> d.Biotac)
+            XPos    = concat (fun d -> d.XPos)
+            TTime   = concat (fun d -> d.TTime)
+            TBiotac = concat (fun d -> d.TBiotac)
+            TXPos   = concat (fun d -> d.TXPos)
+            Dots    = concat (fun d -> d.Dots)
+            Cut     = 0
+            DotPos  = dirDatas.Head.DotPos
         }
 
         // convert dot position list to array
         let dotPosAry = ArrayNDHost.zeros<int> [int64 data.DotPos.Length; 5L]
         for idx, (col, dot, startIdx, stopIdx, row) in Seq.indexed data.DotPos do
-            dotPosAry.[idx, *] <- [col; dot; startIdx; stopIdx; row] |> ArrayNDHost.ofList
+            dotPosAry.[int64 idx, *] <- [col; dot; startIdx; stopIdx; row] |> ArrayNDHost.ofList
 
         // save as HDF5
         ArrayNDHDF.write hdf (partition + "/biotac") data.Biotac
         ArrayNDHDF.write hdf (partition + "/xpos") data.XPos
+        ArrayNDHDF.write hdf (partition + "/t_time") data.TTime
+        ArrayNDHDF.write hdf (partition + "/t_biotac") data.TBiotac
+        ArrayNDHDF.write hdf (partition + "/t_xpos") data.TXPos
         ArrayNDHDF.write hdf (partition + "/dots") data.Dots
         ArrayNDHDF.write hdf (partition + "/ncuts") (ArrayNDHost.scalar nCuts)
         ArrayNDHDF.write hdf (partition + "/dotpos") dotPosAry
