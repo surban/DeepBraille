@@ -640,6 +640,9 @@ let recordMovements dir =
             plotRecordedMovement2 (Path.Combine (subDir, "recorded2.pdf")) curve recMovement None
 
 
+/// Cannot extrapolate to given time.
+exception CannotExtrapolateTo of float
+
 /// Linearly interpolates the samples at the given times.
 /// The interpolation function ipFunc must linearly interpolate according to
 /// let ipFunc fac a b = fac * b + (1. - fac) * a.
@@ -650,8 +653,8 @@ let rec interpolate ipFunc times samples =
         let fac = (t - ta) / (tb - ta) 
         let s = ipFunc fac a b
         (t, s)::(interpolate ipFunc rTimes samples)
-    | t::_, [] -> failwith "cannot extrapolate"
-    | t::_, (ta, _)::_ when t < ta -> failwith "cannot extrapolate"
+    | t::_, [] -> raise (CannotExtrapolateTo t)       
+    | t::_, (ta, _)::_ when t < ta -> raise (CannotExtrapolateTo t)
     | _, _::rSamples -> interpolate ipFunc times rSamples
 
 
@@ -833,7 +836,10 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                         recMovement.Points
                         |> List.map (fun rmp -> fst rmp.DrivenPos, rmp.Biotac)
                     let ipFunc fac = Array.map2 (fun aEl bEl -> fac * bEl + (1. - fac) * aEl)
-                    let xSamples = interpolate ipFunc xPos timeSamples
+                    let xSamples = 
+                        try interpolate ipFunc xPos timeSamples
+                        with CannotExtrapolateTo x -> 
+                            failwithf "cannot extrapolate to position %f in file %s" x recordFile
 
                     // get samples based on time
                     let timeSamples2 =
@@ -841,7 +847,10 @@ let buildCNNData (cfg: CNNDatasetCfg)  =
                         |> List.map (fun rmp -> rmp.Time, (fst rmp.DrivenPos, rmp.Biotac))
                     let ipFunc2 fac (x1, biotac1) (x2, biotac2) = 
                         fac * x2 + (1. - fac) * x1, ipFunc fac biotac1 biotac2
-                    let tSamples = interpolate ipFunc2 ts timeSamples2
+                    let tSamples = 
+                        try interpolate ipFunc2 ts timeSamples2
+                        with CannotExtrapolateTo t -> 
+                            failwithf "cannot extrapolate to time %f in file %s" t recordFile
 
                     // get associated dot line
                     let _, y = recMovement.Points.Head.DrivenPos

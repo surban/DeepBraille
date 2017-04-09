@@ -28,7 +28,7 @@
     <DocumentationFile>bin\Debug\CurveFollow.XML</DocumentationFile>
     <Prefer32Bit>true</Prefer32Bit>
     <PlatformTarget>x64</PlatformTarget>
-    <StartArguments>--mode buildCNNData --cfg .\Cfg\CNNData\Even1-OnLine.fsx</StartArguments>
+    <StartArguments>--mode buildCNNData --cfg .\Cfg\CNNData\RandomVelocity-Even1-Set1.fsx</StartArguments>
     <StartWorkingDirectory>..\..\..</StartWorkingDirectory>
     <EnableUnmanagedDebugging>true</EnableUnmanagedDebugging>
     <UseVSHostingProcess>true</UseVSHostingProcess>
