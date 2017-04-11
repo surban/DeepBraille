@@ -8,6 +8,9 @@ lengthscale=3.75;
 
 
 gp = [];
+
+%%
+clf;
 for smpl=1:10
     [gp, t_smpl, v_smpl] = generate_tv_curve(gp, dt, duration, len, lengthscale);
     tv = [t_smpl v_smpl];
